@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+#include <signal.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -25,11 +26,13 @@
 volatile int STOP = FALSE;
 
 int ua_received = FALSE;
+int fd = -1;
+unsigned char buf[BUF_SIZE] = {0};
 
 int alarmEnabled = FALSE;
 int alarmCount = 0;
 
-void open(){
+void llopen(){
     
     int bytes = write(fd, buf, BUF_SIZE);
     printf("%d bytes written\n", bytes);
@@ -74,7 +77,7 @@ void alarmHandler(int signal)
 
     printf("Alarm #%d\n", alarmCount);
 
-    open();
+    llopen();
 
 }
 
@@ -95,7 +98,7 @@ int main(int argc, char *argv[])
 
     // Open serial port device for reading and writing, and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
-    int fd = open(serialPortName, O_RDWR | O_NOCTTY);
+    fd = open(serialPortName, O_RDWR | O_NOCTTY);
 
     if (fd < 0)
     {
@@ -148,7 +151,6 @@ int main(int argc, char *argv[])
     (void)signal(SIGALRM, alarmHandler);
 
     // Create string to send
-    unsigned char buf[BUF_SIZE] = {0};
     buf[0] = FLAG; 
     buf[1] = 0x03; // A
     buf[2] = 0x03; // C
@@ -160,7 +162,7 @@ int main(int argc, char *argv[])
     // The whole buffer must be sent even with the '\n'.
     buf[5] = '\n';
 
-    open();
+    llopen();
     while (alarmCount < 3 && ua_received == FALSE)
     {
         if (alarmEnabled == FALSE)
