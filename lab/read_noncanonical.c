@@ -20,6 +20,7 @@
 #define TRUE 1
 
 #define BUF_SIZE 256
+#define FLAG 0x7E
 
 volatile int STOP = FALSE;
 
@@ -105,17 +106,22 @@ int main(int argc, char *argv[])
         if(bcc != check){
             printf("error: not compatible\n");
             printf(":%s:%d\n", buf, bytes);
-            printf("var = 0x%02X\n", buf);
+
+            for (int i = 0; i < 5; i++)
+                printf("0x%02X ", buf[i]);
+
         } else {
             printf("SET acknowledged!\n");
             printf(":%s:%d\n", buf, bytes);
-            printf("var = 0x%02X\n", buf);
 
-            buf[0] = 0x7E; // Flag
+            for (int i = 0; i < 5; i++)
+                printf("0x%02X ", buf[i]);
+
+            buf[0] = FLAG; 
             buf[1] = 0x01; // A
             buf[2] = 0x07; // C
             buf[3] = 0x01 ^ 0x07; // bcc1
-            buf[4] = 0x7E; // Flag
+            buf[4] = FLAG; 
             buf[5] = '\n';
             
             int bytes = write(fd, buf, BUF_SIZE);

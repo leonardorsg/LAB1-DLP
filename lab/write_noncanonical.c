@@ -94,11 +94,11 @@ int main(int argc, char *argv[])
 
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
-    buf[0] = 0x7E; // Flag
+    buf[0] = FLAG; 
     buf[1] = 0x03; // A
     buf[2] = 0x03; // C
     buf[3] = 0x03 ^ 0x03; // bcc1
-    buf[4] = 0x7E; // Flag
+    buf[4] = FLAG; 
 
 /*
     for (int i = 0; i < BUF_SIZE; i++)
@@ -114,8 +114,34 @@ int main(int argc, char *argv[])
     int bytes = write(fd, buf, BUF_SIZE);
     printf("%d bytes written\n", bytes);
 
-    // Wait until all bytes have been written to the serial port
-    sleep(1);
+    // // Wait until all bytes have been written to the serial port
+    // sleep(1);
+
+    unsigned char responseBuf[BUF_SIZE];
+    int responseBytes = read(fd, responseBuf, BUF_SIZE);
+
+    if (responseBytes > 0) {
+        unsigned char a = buf[1];
+        unsigned char c = buf[2];
+        unsigned char check = a ^ c;
+        unsigned char bcc = buf[3];
+
+        if(bcc != check){
+            printf(" A ^ C != BCC1\n");
+            printf(":%s:%d\n", buf, bytes);
+            for (int i = 0; i < 5; i++) 
+                printf("0x%02X ", responseBuf[i]);
+            
+        } else {
+            printf("UA received!\n");
+            printf(":%s:%d\n", buf, bytes);
+            for (int i = 0; i < 5; i++) 
+                printf("0x%02X ", responseBuf[i]);
+        }
+    } else {
+        printf("No response received.\n");
+    }
+
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
