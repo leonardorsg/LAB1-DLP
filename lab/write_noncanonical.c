@@ -24,6 +24,60 @@
 
 volatile int STOP = FALSE;
 
+int ua_received = FALSE;
+
+int alarmEnabled = FALSE;
+int alarmCount = 0;
+
+void open(){
+    
+    int bytes = write(fd, buf, BUF_SIZE);
+    printf("%d bytes written\n", bytes);
+
+    // // Wait until all bytes have been written to the serial port
+    
+    unsigned char responseBuf[BUF_SIZE];
+    int responseBytes = read(fd, responseBuf, BUF_SIZE);
+
+    if (responseBytes > 0) {
+        unsigned char a = buf[1];
+        unsigned char c = buf[2];
+        unsigned char check = a ^ c;
+        unsigned char bcc = buf[3];
+
+        if(bcc != check){
+            printf(" A ^ C != BCC1\n");
+            printf(":%s:%d\n", buf, bytes);
+            for (int i = 0; i < 5; i++) 
+                printf("0x%02X ", responseBuf[i]);
+            
+        } else {
+            printf("UA received!\n");
+            printf(":%s:%d\n", buf, bytes);
+            for (int i = 0; i < 5; i++) 
+                printf("0x%02X ", responseBuf[i]);
+            
+            alarm(0); // Disable alarm
+            ua_received = TRUE;
+        }
+    } else {
+        printf("No response received.\n");
+    }
+
+}
+
+// Alarm function handler
+void alarmHandler(int signal)
+{
+    alarmEnabled = FALSE;
+    alarmCount++;
+
+    printf("Alarm #%d\n", alarmCount);
+
+    open();
+
+}
+
 int main(int argc, char *argv[])
 {
     // Program usage: Uses either COM1 or COM2
@@ -68,7 +122,7 @@ int main(int argc, char *argv[])
 
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 0; // Inter-character timer unused
+    newtio.c_cc[VTIME] = 30; // Inter-character timer unused
     newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
@@ -90,7 +144,8 @@ int main(int argc, char *argv[])
 
     printf("New termios structure set\n");
 
-
+    // Set alarm function handler
+    (void)signal(SIGALRM, alarmHandler);
 
     // Create string to send
     unsigned char buf[BUF_SIZE] = {0};
@@ -100,48 +155,20 @@ int main(int argc, char *argv[])
     buf[3] = 0x03 ^ 0x03; // bcc1
     buf[4] = FLAG; 
 
-/*
-    for (int i = 0; i < BUF_SIZE; i++)
-    {
-        buf[i] = 'a' + i % 26;
-    }
-*/
     // In non-canonical mode, '\n' does not end the writing.
     // Test this condition by placing a '\n' in the middle of the buffer.
     // The whole buffer must be sent even with the '\n'.
     buf[5] = '\n';
 
-    int bytes = write(fd, buf, BUF_SIZE);
-    printf("%d bytes written\n", bytes);
-
-    // // Wait until all bytes have been written to the serial port
-    // sleep(1);
-
-    unsigned char responseBuf[BUF_SIZE];
-    int responseBytes = read(fd, responseBuf, BUF_SIZE);
-
-    if (responseBytes > 0) {
-        unsigned char a = buf[1];
-        unsigned char c = buf[2];
-        unsigned char check = a ^ c;
-        unsigned char bcc = buf[3];
-
-        if(bcc != check){
-            printf(" A ^ C != BCC1\n");
-            printf(":%s:%d\n", buf, bytes);
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X ", responseBuf[i]);
-            
-        } else {
-            printf("UA received!\n");
-            printf(":%s:%d\n", buf, bytes);
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X ", responseBuf[i]);
+    open();
+    while (alarmCount < 3 && ua_received == FALSE)
+    {
+        if (alarmEnabled == FALSE)
+        {
+            alarm(3); // Set alarm to be triggered in 3s
+            alarmEnabled = TRUE;
         }
-    } else {
-        printf("No response received.\n");
     }
-
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
