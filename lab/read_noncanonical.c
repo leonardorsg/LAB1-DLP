@@ -21,8 +21,13 @@
 
 #define BUF_SIZE 256
 #define FLAG 0x7E
+#define A 0x03
+#define C 0x03
 
 volatile int STOP = FALSE;
+
+enum State {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_};
+enum State state = START;
 
 int main(int argc, char *argv[])
 {
@@ -67,7 +72,7 @@ int main(int argc, char *argv[])
 
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 30; // Inter-character timer unused
+    newtio.c_cc[VTIME] = 0; // Inter-character timer unused
     newtio.c_cc[VMIN] = 5;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
@@ -97,37 +102,59 @@ int main(int argc, char *argv[])
         // Returns after 5 chars have been input
         int bytes = read(fd, buf, BUF_SIZE);
         buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
-        
-        unsigned char a = buf[1];
-        unsigned char c = buf[2];
-        unsigned char check = a ^ c;
-        unsigned char bcc = buf[3];
 
-        if(bcc != check){
-            printf("error: not compatible\n");
-            printf(":%s:%d\n", buf, bytes);
+        switch(state){
+            case START:
+                if(buf[0] == FLAG){
+                    state = FLAG_RCV;
+                }
+            case FLAG_RCV:
+                if(buf[1] == A){
+                    state = A_RCV;
+                } else if (buf[1] != FLAG) {
+                    state = START;
+                }
+            case A_RCV:
+                if(buf[2] == C){
+                    state = C_RCV;
+                } else if (buf[2] == FLAG) {
+                    state = FLAG_RCV;
+                } else {
+                    state = START;
+                }
+            case C_RCV:
+                if(buf[3] == A ^ C){
+                    state = BCC_OK;
+                } else if (buf[3] == FLAG) {
+                    state = FLAG_RCV;
+                } else {
+                    state = START;
+                }
+            case BCC_OK:
+                if(buf[4] == FLAG){
+                    state = STOP_;
+                } else {
+                    state = START;
+                }
+            case STOP_:
+                printf("SET acknowledged!\n");
+                printf(":%s:%d\n", buf, bytes);
 
-            for (int i = 0; i < 5; i++)
-                printf("0x%02X ", buf[i]);
+                for (int i = 0; i < 5; i++)
+                    printf("0x%02X ", buf[i]);
 
-        } else {
-            printf("SET acknowledged!\n");
-            printf(":%s:%d\n", buf, bytes);
+                buf[0] = FLAG; 
+                buf[1] = 0x01; // A
+                buf[2] = 0x07; // C
+                buf[3] = 0x01 ^ 0x07; // bcc1
+                buf[4] = FLAG; 
+                buf[5] = '\n';
+                int bytes = write(fd, buf, BUF_SIZE);
+                printf("%d bytes written\n", bytes);
 
-            for (int i = 0; i < 5; i++)
-                printf("0x%02X ", buf[i]);
-
-            buf[0] = FLAG; 
-            buf[1] = 0x01; // A
-            buf[2] = 0x07; // C
-            buf[3] = 0x01 ^ 0x07; // bcc1
-            buf[4] = FLAG; 
-            buf[5] = '\n';
-            
-            int bytes = write(fd, buf, BUF_SIZE);
-            printf("%d bytes written\n", bytes);
+                STOP = TRUE;
+                break;
         }
-        STOP = TRUE;
     }
 
     // The while() cycle should be changed in order to respect the specifications
