@@ -25,12 +25,18 @@
 
 volatile int STOP = FALSE;
 
-int ua_received = FALSE;
+unsigned char rr = 0x00;
+unsigned char i = 0x00;
+
 int fd = -1;
 unsigned char buf[BUF_SIZE] = {0};
 
 int alarmEnabled = FALSE;
 int alarmCount = 0;
+
+enum GeneralState {SET_UA, I_RR};
+enum GeneralState general_state = SET_UA;
+
 
 void llopen(){
     
@@ -60,13 +66,80 @@ void llopen(){
             for (int i = 0; i < 5; i++) 
                 printf("0x%02X ", responseBuf[i]);
             
-            alarm(0); // Disable alarm
-            ua_received = TRUE;
+            general_state = I_RR;
+            alarmCount = 0;
         }
     } else {
         printf("No response received.\n");
     }
 
+}
+
+void llwrite(unsigned char i){
+
+    // Create string to send
+    buf[0] = FLAG; 
+    buf[1] = 0x03; // A
+    buf[2] = i; // C
+    buf[3] = 0x03 ^ i; // bcc1
+
+    // TODO: send D and bcc2
+
+    buf[4] = FLAG; 
+
+    int bytes = write(fd, buf, BUF_SIZE);
+    printf("%d bytes written\n", bytes);
+
+    // Wait until all bytes have been written to the serial port
+    unsigned char responseBuf[BUF_SIZE];
+    int responseBytes = read(fd, responseBuf, BUF_SIZE);
+
+    if (responseBytes > 0) {
+        unsigned char a = buf[1];
+        unsigned char c = buf[2];
+        unsigned char check = a ^ c;
+        unsigned char bcc = buf[3];
+
+        if(bcc != check){
+            printf(" A ^ C != BCC1\n");
+            printf(":%s:%d\n", buf, bytes);
+            for (int i = 0; i < 5; i++) 
+                printf("0x%02X ", responseBuf[i]);
+            
+        } else {
+            printf("RR received!\n");
+            printf(":%s:%d\n", buf, bytes);
+            for (int i = 0; i < 5; i++) 
+                printf("0x%02X ", responseBuf[i]);
+
+
+            switch (c)
+            {
+            case 0x54:
+                rr = 0;
+                printf("REJ0\n");
+                break;
+            case 0xAA:
+                rr = 0;
+                printf("RR0\n");
+                break;
+            
+            case 0x55:
+                rr =1;
+                printf("REJ1\n");
+                break;
+            case 0xAB:
+                rr = 1;
+                printf("RR1\n");
+                break;
+            default:
+                break;
+            }
+            
+        }
+    } else {
+        printf("No response received.\n");
+    }
 }
 
 // Alarm function handler
@@ -77,7 +150,23 @@ void alarmHandler(int signal)
 
     printf("Alarm #%d\n", alarmCount);
 
-    llopen();
+    printf("General state: %d\n", general_state);
+
+    switch (general_state){
+        case SET_UA:
+            llopen();
+            break;
+        case I_RR:    
+            if (rr != i)
+                i = !i;  
+            printf("sending i = %d\n", i); 
+            llwrite(i);
+            break;
+        default:
+            // TODO: put it in the end
+            alarm(0); // Disable alarm 
+            break;
+    }  
 
 }
 
@@ -155,6 +244,7 @@ int main(int argc, char *argv[])
     buf[1] = 0x03; // A
     buf[2] = 0x03; // C
     buf[3] = 0x03 ^ 0x03; // bcc1
+    // buf[3]=0xFF;
     buf[4] = FLAG; 
 
     // In non-canonical mode, '\n' does not end the writing.
@@ -163,7 +253,8 @@ int main(int argc, char *argv[])
     buf[5] = '\n';
 
     llopen();
-    while (alarmCount < 3 && ua_received == FALSE)
+
+    while (alarmCount < 3 )
     {
         if (alarmEnabled == FALSE)
         {
@@ -171,6 +262,8 @@ int main(int argc, char *argv[])
             alarmEnabled = TRUE;
         }
     }
+
+      
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
