@@ -89,6 +89,7 @@ void llwrite(unsigned char i){
 
     int bytes = write(fd, buf, BUF_SIZE);
     printf("%d bytes written\n", bytes);
+    i = !i;
 
     // Wait until all bytes have been written to the serial port
     unsigned char responseBuf[BUF_SIZE];
@@ -122,6 +123,7 @@ void llwrite(unsigned char i){
             case 0xAA:
                 rr = 0;
                 printf("RR0\n");
+                alarmCount = 0;
                 break;
             
             case 0x55:
@@ -131,6 +133,7 @@ void llwrite(unsigned char i){
             case 0xAB:
                 rr = 1;
                 printf("RR1\n");
+                alarmCount = 0;
                 break;
             default:
                 break;
@@ -157,7 +160,8 @@ void alarmHandler(int signal)
             llopen();
             break;
         case I_RR:    
-            if (rr != i)
+            if (rr == i)
+            //LEO CHANGE: it was rr != i, but the alarm will only try to send the I message again when rr == i (retrasmission)
                 i = !i;  
             printf("sending i = %d\n", i); 
             llwrite(i);
@@ -262,6 +266,7 @@ int main(int argc, char *argv[])
             alarmEnabled = TRUE;
         }
     }
+
 
       
 

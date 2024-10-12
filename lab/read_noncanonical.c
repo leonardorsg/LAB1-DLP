@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
     while (STOP == FALSE)
     {
         // Returns after 5 chars have been input
-        int bytes = read(fd, buf, BUF_SIZE);
+        int bytes = read(fd, buf, 1);
         buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
         switch(state){
@@ -108,34 +108,40 @@ int main(int argc, char *argv[])
                 if(buf[0] == FLAG){
                     state = FLAG_RCV;
                 }
+            break;
             case FLAG_RCV:
-                if(buf[1] == A){
+                if(buf[0] == A){
                     state = A_RCV;
-                } else if (buf[1] != FLAG) {
+                } else if (buf[0] != FLAG) {
                     state = START;
                 }
+                break;
+
             case A_RCV:
-                if(buf[2] == C){
+                if(buf[0] == C){
                     state = C_RCV;
-                } else if (buf[2] == FLAG) {
+                } else if (buf[0] == FLAG) {
                     state = FLAG_RCV;
                 } else {
                     state = START;
                 }
+                break;
             case C_RCV:
-                if(buf[3] == A ^ C){
+                if(buf[0] == (A ^ C)){
                     state = BCC_OK;
-                } else if (buf[3] == FLAG) {
+                } else if (buf[0] == FLAG) {
                     state = FLAG_RCV;
                 } else {
                     state = START;
                 }
+                break;
             case BCC_OK:
-                if(buf[4] == FLAG){
+                if(buf[0] == FLAG){
                     state = STOP_;
                 } else {
                     state = START;
                 }
+                break;
             case STOP_:
                 printf("SET acknowledged!\n");
                 printf(":%s:%d\n", buf, bytes);
