@@ -26,7 +26,9 @@
 volatile int STOP = FALSE;
 
 unsigned char rr = 0x00;
-unsigned char i = 0x00;
+
+// renamed to i_value to avoid confusion with i for-loop variable
+unsigned char i_value = 0x00; 
 
 int fd = -1;
 unsigned char buf[BUF_SIZE] = {0};
@@ -37,6 +39,11 @@ int alarmCount = 0;
 enum GeneralState {SET_UA, I_RR};
 enum GeneralState general_state = SET_UA;
 
+unsigned char frame0[] = {0x01,0x04,0x29};
+unsigned char frame1[] = {0x02,0x04,0x29};
+
+unsigned char *frames[] = {frame0, frame1};
+size_t frame_sizes[] = {sizeof(frame0), sizeof(frame1)};
 
 void llopen(){
     
@@ -57,17 +64,20 @@ void llopen(){
         if(bcc != check){
             printf(" A ^ C != BCC1\n");
             printf(":%s:%d\n", buf, bytes);
+
             for (int i = 0; i < 5; i++) 
-                printf("0x%02X ", responseBuf[i]);
+                printf("0x%02X \n", responseBuf[i]);
             
         } else {
             printf("UA received!\n");
             printf(":%s:%d\n", buf, bytes);
+
             for (int i = 0; i < 5; i++) 
-                printf("0x%02X ", responseBuf[i]);
+                printf("0x%02X \n", responseBuf[i]);
             
             general_state = I_RR;
-            alarmCount = 0;
+            alarmCount = 0; // Reset alarm count
+            alarm(0);
         }
     } else {
         printf("No response received.\n");
@@ -75,73 +85,110 @@ void llopen(){
 
 }
 
-void llwrite(unsigned char i){
+void llwrite(unsigned char i_value){
 
     // Create string to send
     buf[0] = FLAG; 
     buf[1] = 0x03; // A
-    buf[2] = i; // C
-    buf[3] = 0x03 ^ i; // bcc1
+    buf[2] = i_value; // C
+    buf[3] = 0x03 ^ i_value; // bcc1
 
-    // TODO: send D and bcc2
+    unsigned char bcc2 = 0x00;
 
-    buf[4] = FLAG; 
+    unsigned char *selectedFrame = frames[i_value];
+    size_t frameSize = frame_sizes[i_value]; 
+
+    for (int j = 0; j < frameSize; j++) {
+        buf[4 + j] = selectedFrame[j]; 
+        bcc2 ^= selectedFrame[j];
+    }
+
+// frame0 = {0x01,0x04,0x29};
+// frame1 = {0x02,0x04,0x29};
+
+    buf[frameSize + 4] = bcc2;
+    buf[frameSize + 5] = FLAG;
+
+    printf("buf to send: \n");
+    for (int i = 0; i < frameSize + 6; i++) 
+        printf("0x%02X \n", buf[i]);
 
     int bytes = write(fd, buf, BUF_SIZE);
-    printf("%d bytes written\n", bytes);
-    i = !i;
-
+    printf("%d bytes written during llwrite\n", bytes);
+    
     // Wait until all bytes have been written to the serial port
     unsigned char responseBuf[BUF_SIZE];
     int responseBytes = read(fd, responseBuf, BUF_SIZE);
 
     if (responseBytes > 0) {
-        unsigned char a = buf[1];
-        unsigned char c = buf[2];
+        unsigned char a = responseBuf[1];
+        unsigned char c = responseBuf[2];
         unsigned char check = a ^ c;
-        unsigned char bcc = buf[3];
+        unsigned char bcc = responseBuf[3];
 
         if(bcc != check){
             printf(" A ^ C != BCC1\n");
-            printf(":%s:%d\n", buf, bytes);
+            printf(":%s:%d\n", responseBuf, bytes);
             for (int i = 0; i < 5; i++) 
-                printf("0x%02X ", responseBuf[i]);
+                printf("0x%02X \n", responseBuf[i]);
             
         } else {
-            printf("RR received!\n");
-            printf(":%s:%d\n", buf, bytes);
+            printf(" bcc==check! \n");
+            printf(":%s:%d\n", responseBuf, bytes);
+
             for (int i = 0; i < 5; i++) 
-                printf("0x%02X ", responseBuf[i]);
+                printf("0x%02X \n", responseBuf[i]);  
 
-
-            switch (c)
-            {
-            case 0x54:
-                rr = 0;
-                printf("REJ0\n");
-                break;
-            case 0xAA:
-                rr = 0;
-                printf("RR0\n");
-                alarmCount = 0;
-                break;
-            
-            case 0x55:
-                rr =1;
-                printf("REJ1\n");
-                break;
-            case 0xAB:
-                rr = 1;
-                printf("RR1\n");
-                alarmCount = 0;
-                break;
-            default:
-                break;
+            switch (c) {
+                case 0x54:
+                    rr = 0;
+                    printf("REJ0\n");
+                    break;
+                case 0xAA:
+                    rr = 0;
+                    printf("RR0\n");
+                    alarmCount = 0; // Reset alarm count   
+                    alarm(0); // Disable alarm          
+                    break;
+                case 0x55:
+                    rr =1;
+                    printf("REJ1\n");
+                    break;
+                case 0xAB:
+                    rr = 1;
+                    printf("RR1\n");
+                    alarmCount = 0; // Reset alarm count    
+                    alarm(0); // Disable alarm            
+                    break;
+                default:
+                    break;
             }
+
+            if (rr == i_value){ // If the received RR is the same as the sent I, we retry the transmission
+                printf("Retransmitting frame, i = %d, alarmCount = %d\n", i_value, alarmCount);
+
+                if (alarmEnabled == FALSE) {
+                    printf("Setting alarm, alarmCount = %d\n", alarmCount);
+                    alarm(3); // Set alarm to be triggered in 3s
+                    alarmEnabled = TRUE;
+                }
+
+            } else       // If the received RR is different from the sent I,
+                i_value = !i_value;  // change the I value
+            
+            // by default, the next I is the same as the previous one
+            printf("next i = %d\n", i_value); 
             
         }
     } else {
-        printf("No response received.\n");
+        printf("No response received,  %d  alarmCount = %d \n", i_value, alarmCount);
+
+        // If no response is received, we retry the transmission
+        if (alarmEnabled == FALSE) {
+            printf("Setting alarm, alarmCount = %d\n", alarmCount);
+            alarm(3); // Set alarm to be triggered in 3s
+            alarmEnabled = TRUE;
+        }
     }
 }
 
@@ -160,18 +207,17 @@ void alarmHandler(int signal)
             llopen();
             break;
         case I_RR:    
-            if (rr == i)
-            //LEO CHANGE: it was rr != i, but the alarm will only try to send the I message again when rr == i (retrasmission)
-                i = !i;  
-            printf("sending i = %d\n", i); 
-            llwrite(i);
+            printf("Frame not received, retransmitting i = %d\n", i_value);
+            llwrite(i_value);
             break;
         default:
+            printf("Invalid general state, %d\n", general_state);
+
             // TODO: put it in the end
             alarm(0); // Disable alarm 
             break;
-    }  
-
+    } 
+    
 }
 
 int main(int argc, char *argv[])
@@ -258,17 +304,23 @@ int main(int argc, char *argv[])
 
     llopen();
 
-    while (alarmCount < 3 )
+    while (alarmCount < 3 && general_state==SET_UA)
     {
-        if (alarmEnabled == FALSE)
+        if (!alarmEnabled)
         {
             alarm(3); // Set alarm to be triggered in 3s
             alarmEnabled = TRUE;
         }
     }
 
+    while (alarmCount < 3 && general_state == I_RR){
+        if (!alarmEnabled){
+            printf("Alarm disabled, writing frame %d\n", i_value);
+            llwrite(i_value);
+        }
+    }
 
-      
+    printf("Exausted all attempts\n");
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
