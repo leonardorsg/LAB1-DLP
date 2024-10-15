@@ -23,6 +23,7 @@
 #define BUF_SIZE 256
 #define FLAG 0x7E
 #define ESC 0x7D
+#define A 0x03
 
 volatile int STOP = FALSE;
 
@@ -90,15 +91,22 @@ void llwrite(unsigned char i_value){
 
     // Create string to send
     buf[0] = FLAG; 
-    buf[1] = 0x03; // A
-    buf[2] = i_value; // C
-    buf[3] = 0x03 ^ i_value; // bcc1
+    buf[1] = A; 
+
+    // C
+
+    if (i_value)
+        buf[2] = 0x80;
+    else
+        buf[2] = 0x00;
+
+    buf[3] = A ^ buf[2]; // bcc1
 
     unsigned char bcc2 = 0x00;
-
+    
     unsigned char *selectedFrame = frames[i_value];
     size_t frameSize = frame_sizes[i_value]; 
-
+    
     size_t pos = 4;
 
     for (int j = 0; j < frameSize; j++, pos++) {
@@ -165,7 +173,7 @@ void llwrite(unsigned char i_value){
                     alarm(0); // Disable alarm          
                     break;
                 case 0x55:
-                    rr =1;
+                    rr = 1;
                     printf("REJ1\n");
                     break;
                 case 0xAB:
@@ -305,9 +313,9 @@ int main(int argc, char *argv[])
 
     // Create string to send
     buf[0] = FLAG; 
-    buf[1] = 0x03; // A
+    buf[1] = A;
     buf[2] = 0x03; // C
-    buf[3] = 0x03 ^ 0x03; // bcc1
+    buf[3] = A ^ 0x03; // bcc1
     // buf[3]=0xFF;
     buf[4] = FLAG; 
 
