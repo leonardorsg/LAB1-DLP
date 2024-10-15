@@ -22,6 +22,7 @@
 
 #define BUF_SIZE 256
 #define FLAG 0x7E
+#define ESC 0x7D
 
 volatile int STOP = FALSE;
 
@@ -98,20 +99,33 @@ void llwrite(unsigned char i_value){
     unsigned char *selectedFrame = frames[i_value];
     size_t frameSize = frame_sizes[i_value]; 
 
-    for (int j = 0; j < frameSize; j++) {
-        buf[4 + j] = selectedFrame[j]; 
+    size_t pos = 4;
+
+    for (int j = 0; j < frameSize; j++, pos++) {
+
+        unsigned char value = selectedFrame[j];
+
+        if (value == FLAG){
+            buf[pos] = ESC;
+            buf[++pos] = 0x5E;
+        } else if (value == ESC){
+            buf[pos] = ESC;
+            buf[++pos] = 0x5D;
+        } else
+            buf[pos] = selectedFrame[j]; 
+
         bcc2 ^= selectedFrame[j];
     }
 
 // frame0 = {0x01,0x04,0x29};
 // frame1 = {0x02,0x04,0x29};
 
-    buf[frameSize + 4] = bcc2;
-    buf[frameSize + 5] = FLAG;
+    buf[pos] = bcc2;
+    buf[pos+1] = FLAG;
 
     printf("buf to send: \n");
     for (int i = 0; i < frameSize + 6; i++) 
-        printf("0x%02X \n", buf[i]);
+        printf("buf[%d]: 0x%02X \n", i, buf[i]);
 
     int bytes = write(fd, buf, BUF_SIZE);
     printf("%d bytes written during llwrite\n", bytes);
