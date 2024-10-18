@@ -30,6 +30,9 @@ volatile int STOP = FALSE;
 enum State {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_};
 enum State state = START;
 
+int fd = -1;
+unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
+
 unsigned char i_signal = 0x12;
 unsigned char rr_signal = 0x12;
 unsigned char counter = ESC;
@@ -39,6 +42,129 @@ enum State_ACK state_ack = START_ack;
 
 enum GeneralState {SET_UA, I_RR, CLOSE};
 enum GeneralState general_state = SET_UA;
+
+int llread(){
+
+    STOP = FALSE;
+    unsigned char bcc2_value = 0x00;
+    unsigned char is_esc = false;
+
+    while ((STOP == FALSE) && (general_state == I_RR))
+    {
+        // Returns after 5 chars have been input
+        int bytes = read(fd, buf, 1);
+        buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
+        switch(state_ack){
+            case START_ack:
+                if(buf[0] == FLAG){
+                    state_ack = FLAG_RCV_ack;
+                }
+                //printf("start");
+            break;
+            case FLAG_RCV_ack:
+                if(buf[0] == A){
+                    state_ack  = A_RCV_ack;
+                    printf("flag to a\n");
+                } else if (buf[0] != FLAG) {
+                    state_ack  = START_ack;
+                    printf("flag to start\n");
+                }
+                break;
+
+            case A_RCV_ack:
+                if((buf[0] == 0x00) || (buf[0] == 0x80)){
+                    state_ack = C_RCV_ack;
+                    i_signal = buf[0];
+                    printf("A_RCV_ack to C_RCV_ack, i_signal = %x\n", i_signal);
+                } else if (buf[0] == FLAG) {
+                    state_ack = FLAG_RCV_ack;
+                    printf("a to flag t\n");
+                } else {
+                    state_ack = START_ack;
+                    printf("a to start\n");
+                }
+                break;
+            case C_RCV:
+                if(buf[0] == (A ^ i_signal)){
+                    state_ack  = BCC1_OK_ack;
+                    printf("c to bcc1\n");
+                } else if (buf[0] == FLAG) {
+                    state_ack  = FLAG_RCV_ack;
+                    printf("c to flag\n");
+                } else {
+                    state_ack = START_ack;
+                    printf("c to to start\n");
+                }
+                break;
+            case BCC1_OK_ack:
+                if(buf[0] == FLAG){
+                    bcc2_value ^= counter;
+                    if(bcc2_value == counter){
+                        state_ack = STOP_ack;
+                        printf("bcc1 to stop\n");
+                        if(i_signal == 0x00){
+                            rr_signal = 0xAB;
+                        } else if(i_signal == 0x80){
+                            rr_signal = 0xAA;
+                        }
+                    } else{
+                        state_ack = STOP_ack;
+                        printf("bcc1 to stop\n");
+                        if(i_signal == 0x00){
+                            rr_signal = 0x54;
+                        } else if(i_signal == 0x80){
+                            rr_signal = 0x55;
+                        }
+                    }
+                } else {
+                    if(!is_esc){
+                        if(buf[0]==ESC){
+                            is_esc = true;
+                        }else{
+                            counter = buf[0];
+                            bcc2_value ^= buf[0];
+                        }
+                    }
+                    else {
+                        is_esc = false;
+                        if (buf[0] == 0x5e){
+                            bcc2_value ^= 0x7e;
+
+                        } else if(buf[0] == 0x5d){
+                            bcc2_value ^= 0x7d;
+                        }
+                    }
+                }
+                break;
+            case STOP_ack:
+                printf("FRAME acknowledged!\n");
+            
+
+                buf[0] = FLAG; 
+                buf[1] = 0x01; // A
+                buf[2] = rr_signal; // C
+                buf[3] = 0x01 ^ rr_signal; // bcc1
+                buf[4] = FLAG; 
+                buf[5] = '\n';
+                for (int i = 0; i < 1; i++)
+                    printf("0x%02X ", buf[i]);
+                int bytes = write(fd, buf, BUF_SIZE);
+                printf("%d bytes written\n", bytes);
+                printf("stop\n");
+                //STOP = TRUE;
+                general_state = I_RR;
+                bcc2_value = 0x00;
+                is_esc = false;
+                i_signal = 0x12;
+                rr_signal = 0x12;
+                counter = ESC;
+                state_ack = START_ack;
+                break;
+        }
+    }
+
+    return 0;
+}
 
 int main(int argc, char *argv[])
 {
@@ -57,7 +183,7 @@ int main(int argc, char *argv[])
 
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
-    int fd = open(serialPortName, O_RDWR | O_NOCTTY);
+    fd = open(serialPortName, O_RDWR | O_NOCTTY);
     if (fd < 0)
     {
         perror(serialPortName);
@@ -106,7 +232,7 @@ int main(int argc, char *argv[])
     printf("New termios structure set\n");
 
     // Loop for input
-    unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
+    
 
     while (STOP == FALSE && general_state == SET_UA)
     {
@@ -175,129 +301,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    STOP = FALSE;
-    unsigned char bcc2_value = 0x00;
-    unsigned char is_esc = false;
-
-    while ((STOP == FALSE) && (general_state == I_RR))
-    {
-        // Returns after 5 chars have been input
-        int bytes = read(fd, buf, 1);
-        buf[bytes] = '\0'; // Set end of string to '\0', so we can printf
-        switch(state_ack){
-            case START_ack:
-                if(buf[0] == FLAG){
-                    state_ack = FLAG_RCV_ack;
-                }
-                //printf("start");
-            break;
-            case FLAG_RCV_ack:
-                if(buf[0] == A){
-                    state_ack  = A_RCV_ack;
-                    printf("flag to a\n");
-                } else if (buf[0] != FLAG) {
-                    state_ack  = START_ack;
-                    printf("flag to start\n");
-                }
-                break;
-
-            case A_RCV_ack:
-                if((buf[0] == 0x00) || (buf[0] == 0x80)){
-                    state_ack = C_RCV_ack;
-                    i_signal = buf[0];
-                    printf("A_RCV_ack to C_RCV_ack, i_signal = %x\n", i_signal);
-                } else if (buf[0] == FLAG) {
-                    state_ack = FLAG_RCV_ack;
-                    printf("a to flag t\n");
-                } else {
-                    state_ack = START_ack;
-                    printf("a to start\n");
-                }
-                break;
-            case C_RCV:
-                if(buf[0] == (A ^ i_signal)){
-                    state_ack  = BCC1_OK_ack;
-                    printf("c to bcc1\n");
-                } else if (buf[0] == FLAG) {
-                    state_ack  = FLAG_RCV_ack;
-                    printf("c to flag\n");
-                } else {
-                    state_ack = STOP_ack;
-                    printf("c to stop\n");
-                    if(i_signal == 0x00){
-                        rr_signal = 0x54;
-                    } else if(i_signal == 0x80){
-                        rr_signal = 0x55;
-                    }
-                }
-                break;
-            case BCC1_OK_ack:
-                if(buf[0] == FLAG){
-                    bcc2_value ^= counter;
-                    if(bcc2_value == counter){
-                        state_ack = STOP_ack;
-                        printf("bcc1 to stop\n");
-                        if(i_signal == 0x00){
-                            rr_signal = 0xAB;
-                        } else if(i_signal == 0x80){
-                            rr_signal = 0xAA;
-                        }
-                    } else{
-                        state_ack = STOP_ack;
-                        printf("bcc1 to stop\n");
-                        if(i_signal == 0x00){
-                            rr_signal = 0x54;
-                        } else if(i_signal == 0x80){
-                            rr_signal = 0x55;
-                        }
-                    }
-                } else {
-                    if(!is_esc){
-                        if(buf[0]==ESC){
-                            is_esc = true;
-                        }else{
-                            counter = buf[0];
-                            bcc2_value ^= buf[0];
-                        }
-                    }
-                    else {
-                        is_esc = false;
-                        if (buf[0] == 0x5e){
-                            bcc2_value ^= 0x7e;
-
-                        } else if(buf[0] == 0x5d){
-                            bcc2_value ^= 0x7d;
-                        }
-                    }
-                }
-                break;
-            case STOP_ack:
-                printf("FRAME acknowledged!\n");
-                printf(":%s:%d\n", buf, bytes);
-
-                for (int i = 0; i < 1; i++)
-                    printf("0x%02X ", buf[i]);
-
-                buf[0] = FLAG; 
-                buf[1] = 0x01; // A
-                buf[2] = rr_signal; // C
-                buf[3] = 0x01 ^ rr_signal; // bcc1
-                buf[4] = FLAG; 
-                buf[5] = '\n';
-                int bytes = write(fd, buf, BUF_SIZE);
-                printf("%d bytes written\n", bytes);
-                printf("stop\n");
-                //STOP = TRUE;
-                general_state = I_RR;
-                bcc2_value = 0x00;
-                is_esc = false;
-                i_signal = 0x12;
-                rr_signal = 0x12;
-                counter = ESC;
-                state_ack = START_ack;
-                break;
-        }
-    }
+    llread();
 
     // The while() cycle should be changed in order to respect the specifications
     // of the protocol indicated in the Lab guide
