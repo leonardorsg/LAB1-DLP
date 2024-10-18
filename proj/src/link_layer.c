@@ -33,10 +33,8 @@ enum State state = START;
 
 int fd = -1;
 unsigned char bufc[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
-
-unsigned char i_signal = 0x12;
-unsigned char rr_signal = 0x12;
-unsigned char counter = ESC;
+unsigned char curr_buf[BUF_SIZE + 1] = {0};
+int curr_buf_size = 0;
 
 enum State_ACK {START_ack, FLAG_RCV_ack, A_RCV_ack, C_RCV_ack, BCC1_OK_ack, STOP_ack};
 enum State_ACK state_ack = START_ack;
@@ -243,7 +241,7 @@ void alarmHandler(int signal)
             break;
         case I_RR:    
             printf("Frame not received, retransmitting i = %d\n", i_value);
-            llwrite();
+            send_information(curr_buf,curr_buf_size);
             break;
         default:
             printf("Invalid general state, %d\n", general_state);
@@ -383,14 +381,24 @@ int llwrite(const unsigned char *buf, int bufSize)
 {
     // Set alarm function handler
     (void)signal(SIGALRM, alarmHandler);
-
+    curr_buf_size = bufSize;
     //copy value of buf and bufsize as a global variable so that alarm handler can use it
+    for(int i=0; i < bufSize; i++){
+        curr_buf[i] = buf[i];
+    }
+
+    
     while (alarmCount < 3 && general_state == I_RR){
         if (!alarmEnabled){
             printf("Alarm disabled, writing frame %d\n", i_value);
             send_information(buf, bufSize);
         }
     }
+
+    for(int i=0; i < bufSize; i++){
+        curr_buf[i] = 0;
+    }
+    curr_buf_size = 0;
 
     //send bytes written is success and -1 if failure
     printf("Exausted all attempts\n");
@@ -406,11 +414,9 @@ int llread(unsigned char *packet)
     STOP = FALSE;
     unsigned char bcc2_value = 0x00;
     unsigned char is_esc = FALSE;
-    bcc2_value = 0x00;
-    is_esc = FALSE;
-    i_signal = 0x12;
-    rr_signal = 0x12;
-    counter = ESC;
+    unsigned char i_signal = 0x12;
+    unsigned char rr_signal = 0x12;
+    unsigned char counter = ESC;
     state_ack = START_ack;
 
     while ((STOP == FALSE) && (general_state == I_RR))
