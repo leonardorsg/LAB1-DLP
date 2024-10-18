@@ -197,6 +197,7 @@ void llwrite(unsigned char i_value){
 
             } else       // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
+                printf("just changed i_value to %d\n", i_value);
             
             // by default, the next I is the same as the previous one
             printf("next i = %d\n", i_value); 
