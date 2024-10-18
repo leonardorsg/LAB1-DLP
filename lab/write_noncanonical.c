@@ -87,7 +87,13 @@ void llopen(){
 
 }
 
-void llwrite(unsigned char i_value){
+void setOffAlarm(){
+    alarm(0); // Disable alarm
+    alarmEnabled = FALSE;
+    alarmCount = 0;
+}
+
+void llwrite(){
 
     // Create string to send
     buf[0] = FLAG; 
@@ -137,6 +143,12 @@ void llwrite(unsigned char i_value){
 
     int bytes = write(fd, buf, BUF_SIZE);
     printf("%d bytes written during llwrite\n", bytes);
+
+    if (alarmEnabled == FALSE) {
+        printf("Setting alarm, alarmCount = %d\n", alarmCount);
+        alarm(3); // Set alarm to be triggered in 3s
+        alarmEnabled = TRUE;
+    }
     
     // Wait until all bytes have been written to the serial port
     unsigned char responseBuf[BUF_SIZE];
@@ -164,54 +176,42 @@ void llwrite(unsigned char i_value){
             switch (c) {
                 case 0x54:
                     rr = 0;
+                    setOffAlarm();
                     printf("REJ0\n");
                     break;
                 case 0xAA:
                     rr = 0;
-                    printf("RR0\n");
-                    alarmCount = 0; // Reset alarm count   
-                    alarm(0); // Disable alarm          
+                    setOffAlarm();
+                    printf("RR0\n");     
                     break;
                 case 0x55:
                     rr = 1;
+                    setOffAlarm();
                     printf("REJ1\n");
                     break;
                 case 0xAB:
                     rr = 1;
-                    printf("RR1\n");
-                    alarmCount = 0; // Reset alarm count    
-                    alarm(0); // Disable alarm            
+                    setOffAlarm();
+                    printf("RR1\n");      
                     break;
                 default:
                     break;
             }
 
-            if (rr == i_value){ // If the received RR is the same as the sent I, we retry the transmission
-                printf("Retransmitting frame, i = %d, alarmCount = %d\n", i_value, alarmCount);
-
-                if (alarmEnabled == FALSE) {
-                    printf("Setting alarm, alarmCount = %d\n", alarmCount);
-                    alarm(3); // Set alarm to be triggered in 3s
-                    alarmEnabled = TRUE;
-                }
-
-            } else       // If the received RR is different from the sent I,
+            if (rr != i_value){  // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
                 printf("just changed i_value to %d\n", i_value);
-            
+
+            } 
+            // else    // If the received RR is the same as the sent I, we keep i_value
+            //     printf("Keeping i = %d, alarmCount = %d\n", i_value, alarmCount);
+
             // by default, the next I is the same as the previous one
             printf("next i = %d\n", i_value); 
             
         }
     } else {
         printf("No response received,  %d  alarmCount = %d \n", i_value, alarmCount);
-
-        // If no response is received, we retry the transmission
-        if (alarmEnabled == FALSE) {
-            printf("Setting alarm, alarmCount = %d\n", alarmCount);
-            alarm(3); // Set alarm to be triggered in 3s
-            alarmEnabled = TRUE;
-        }
     }
 }
 
@@ -231,7 +231,7 @@ void alarmHandler(int signal)
             break;
         case I_RR:    
             printf("Frame not received, retransmitting i = %d\n", i_value);
-            llwrite(i_value);
+            llwrite();
             break;
         default:
             printf("Invalid general state, %d\n", general_state);
@@ -339,7 +339,7 @@ int main(int argc, char *argv[])
     while (alarmCount < 3 && general_state == I_RR){
         if (!alarmEnabled){
             printf("Alarm disabled, writing frame %d\n", i_value);
-            llwrite(i_value);
+            llwrite();
         }
     }
 
