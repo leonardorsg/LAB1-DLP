@@ -47,7 +47,7 @@ unsigned char i_value = 0x00;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
 
-enum GeneralState {SET_UA, I_RR, DISC};
+enum GeneralState {SET_UA, I_RR, DISC, END};
 enum GeneralState general_state = SET_UA;
 
 unsigned char frame0[] = {0x01,0x04,0x29};
@@ -56,11 +56,15 @@ unsigned char frame1[] = {0x02,0x04,0x29};
 unsigned char *frames[] = {frame0, frame1};
 size_t frame_sizes[] = {sizeof(frame0), sizeof(frame1)};
 
+LinkLayerRole curr_role;
 
-void send_set(){
+
+void send_supervision_frame(){
     
     int bytes = write(fd, bufc, BUF_SIZE);
     printf("%d bytes written\n", bytes);
+
+    if(general_state == END) return;
 
     // Wait until all bytes have been written to the serial port
     
@@ -81,13 +85,23 @@ void send_set(){
                 printf("0x%02X \n", responseBuf[i]);
             
         } else {
-            printf("UA received!\n");
-            printf(":%s:%d\n", bufc, bytes);
+            if(general_state == SET_UA){
+                printf("UA received!\n");
+                printf(":%s:%d\n", bufc, bytes);
 
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X \n", responseBuf[i]);
-            
-            general_state = I_RR;
+                for (int i = 0; i < 5; i++) 
+                    printf("0x%02X \n", responseBuf[i]);
+                
+                general_state = I_RR;
+            }else if(general_state == DISC){
+                printf("DISC received!\n");
+                printf(":%s:%d\n", bufc, bytes);
+
+                for (int i = 0; i < 5; i++) 
+                    printf("0x%02X \n", responseBuf[i]);
+                
+                general_state = END;
+            }
             alarmCount = 0; // Reset alarm count
             alarm(0);
         }
@@ -237,11 +251,14 @@ void alarmHandler(int signal)
 
     switch (general_state){
         case SET_UA:
-            send_set();
+            send_supervision_frame();
             break;
         case I_RR:    
             printf("Frame not received, retransmitting i = %d\n", i_value);
             send_information(curr_buf,curr_buf_size);
+            break;
+        case DISC:
+            send_supervision_frame();
             break;
         default:
             printf("Invalid general state, %d\n", general_state);
@@ -268,9 +285,9 @@ int llopen(LinkLayer connectionParameters)
     printf("New termios structure set\n");
 
     if(connectionParameters.role == LlTx){
+        curr_role = LlTx;
         // Set alarm function handler
         (void)signal(SIGALRM, alarmHandler);
-
         // Create string to send
         bufc[0] = FLAG; 
         bufc[1] = A;
@@ -280,7 +297,7 @@ int llopen(LinkLayer connectionParameters)
         bufc[4] = FLAG; 
         bufc[5] = '\n';
 
-        send_set();
+        send_supervision_frame();
 
         while (alarmCount < 3 && general_state==SET_UA)
         {
@@ -300,6 +317,7 @@ int llopen(LinkLayer connectionParameters)
     }
 
     if(connectionParameters.role == LlRx){
+        curr_role = LlRx;
 
     while (STOP == FALSE && general_state == SET_UA)
     {
@@ -522,7 +540,6 @@ int llread(unsigned char *packet)
                 printf("%d bytes written\n", bytes);
                 printf("stop\n");
                 STOP = TRUE;
-                general_state = DISC;
                 break;
         }
     }
@@ -535,8 +552,168 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 int llclose(int showStatistics)
 {
-    // TODO
+    //TODO collect statistics
+    if(curr_role == LlTx){
+        // Set alarm function handler
+        (void)signal(SIGALRM, alarmHandler);
+        // Create string to send
+        bufc[0] = FLAG; 
+        bufc[1] = A;
+        bufc[2] = 0x0B; // C
+        bufc[3] = A ^ 0x0B; // bcc1
+        // buf[3]=0xFF;
+        bufc[4] = FLAG; 
+        bufc[5] = '\n';
 
+        send_supervision_frame();
+        general_state = DISC;
+
+        while (alarmCount < 3 && general_state==DISC)
+        {
+            if (!alarmEnabled)
+            {
+                alarm(3); // Set alarm to be triggered in 3s
+                alarmEnabled = TRUE;
+            }
+        }
+
+        bufc[0] = FLAG; 
+        bufc[1] = A;
+        bufc[2] = 0x07; // C
+        bufc[3] = A ^ 0x07; // bcc1
+        // buf[3]=0xFF;
+        bufc[4] = FLAG; 
+        bufc[5] = '\n';
+
+        send_supervision_frame();
+
+    } else if(curr_role == LlRx){
+        general_state == DISC;
+        while (STOP == FALSE && general_state == DISC){
+        // Returns after 5 chars have been input
+        int bytes = read(fd, bufc, 1);
+        bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
+        switch(state){
+            case START:
+                if(bufc[0] == FLAG){
+                    state = FLAG_RCV;
+                }
+            break;
+            case FLAG_RCV:
+                if(bufc[0] == A){
+                    state = A_RCV;
+                } else if (bufc[0] != FLAG) {
+                    state = START;
+                }
+                break;
+
+            case A_RCV:
+                if(bufc[0] == C){
+                    state = C_RCV;
+                } else if (bufc[0] == FLAG) {
+                    state = FLAG_RCV;
+                } else {
+                    state = START;
+                }
+                break;
+            case C_RCV:
+                if(bufc[0] == (A ^ 0x0B)){
+                    state = BCC_OK;
+                } else if (bufc[0] == FLAG) {
+                    state = FLAG_RCV;
+                } else {
+                    state = START;
+                }
+                break;
+            case BCC_OK:
+                if(bufc[0] == FLAG){
+                    state = STOP_;
+                } else {
+                    state = START;
+                }
+                break;
+            case STOP_:
+                printf("DISC acknowledged!\n");
+                printf(":%s:%d\n", bufc, bytes);
+
+                for (int i = 0; i < 5; i++)
+                    printf("0x%02X ", bufc[i]);
+
+                bufc[0] = FLAG; 
+                bufc[1] = 0x01; // A
+                bufc[2] = 0x0B; // C
+                bufc[3] = 0x01 ^ 0x0B; // bcc1
+                bufc[4] = FLAG; 
+                bufc[5] = '\n';
+                int bytes = write(fd, bufc, BUF_SIZE);
+                printf("%d bytes written\n", bytes);
+
+                STOP = TRUE;
+                general_state = END;
+                break;
+        }
+    }
+
+    STOP = TRUE;
+    state = START;
+
+    while (STOP == FALSE && general_state == END){
+        // Returns after 5 chars have been input
+        int bytes = read(fd, bufc, 1);
+        bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
+        switch(state){
+            case START:
+                if(bufc[0] == FLAG){
+                    state = FLAG_RCV;
+                }
+            break;
+            case FLAG_RCV:
+                if(bufc[0] == A){
+                    state = A_RCV;
+                } else if (bufc[0] != FLAG) {
+                    state = START;
+                }
+                break;
+
+            case A_RCV:
+                if(bufc[0] == C){
+                    state = C_RCV;
+                } else if (bufc[0] == FLAG) {
+                    state = FLAG_RCV;
+                } else {
+                    state = START;
+                }
+                break;
+            case C_RCV:
+                if(bufc[0] == (A ^ 0x07)){
+                    state = BCC_OK;
+                } else if (bufc[0] == FLAG) {
+                    state = FLAG_RCV;
+                } else {
+                    state = START;
+                }
+                break;
+            case BCC_OK:
+                if(bufc[0] == FLAG){
+                    state = STOP_;
+                } else {
+                    state = START;
+                }
+                break;
+            case STOP_:
+                printf("UA acknowledged!\n");
+                printf(":%s:%d\n", bufc, bytes);
+
+                for (int i = 0; i < 5; i++)
+                    printf("0x%02X ", bufc[i]);
+
+                STOP = TRUE;
+                break;
+        }
+    }
+}
     int clstat = closeSerialPort();
     return clstat;
 }
