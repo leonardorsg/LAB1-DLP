@@ -31,7 +31,7 @@ volatile int STOP = FALSE;
 enum State {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_};
 enum State state = START;
 
-int fd = -1;
+int fdd = -1;
 unsigned char bufc[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
 unsigned char curr_buf[BUF_SIZE + 1] = {0};
 int curr_buf_size = 0;
@@ -61,7 +61,7 @@ LinkLayerRole curr_role;
 
 void send_supervision_frame(){
     
-    int bytes = write(fd, bufc, BUF_SIZE);
+    int bytes = write(fdd, bufc, BUF_SIZE);
     printf("%d bytes written\n", bytes);
 
     if(general_state == END) return;
@@ -69,7 +69,7 @@ void send_supervision_frame(){
     // Wait until all bytes have been written to the serial port
     
     unsigned char responseBuf[BUF_SIZE];
-    int responseBytes = read(fd, responseBuf, BUF_SIZE);
+    int responseBytes = read(fdd, responseBuf, BUF_SIZE);
 
     if (responseBytes > 0) {
         unsigned char a = bufc[1];
@@ -165,7 +165,7 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
     for (int i = 0; i < frameSize + 6; i++) 
         printf("buf[%d]: 0x%02X \n", i, bufc[i]);
 
-    int bytes = write(fd, bufc, BUF_SIZE);
+    int bytes = write(fdd, bufc, BUF_SIZE);
     printf("%d bytes written during llwrite\n", bytes);
 
     if (alarmEnabled == FALSE) {
@@ -176,7 +176,7 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
     
     // Wait until all bytes have been written to the serial port
     unsigned char responseBuf[BUF_SIZE];
-    int responseBytes = read(fd, responseBuf, BUF_SIZE);
+    int responseBytes = read(fdd, responseBuf, BUF_SIZE);
 
     if (responseBytes > 0) {
         unsigned char a = responseBuf[1];
@@ -275,9 +275,9 @@ void alarmHandler(int signal)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    fd = openSerialPort(connectionParameters.serialPort,
+    fdd = openSerialPort(connectionParameters.serialPort,
                        connectionParameters.baudRate);
-    if (fd < 0)
+    if (fdd < 0)
     {
         return -1;
     }
@@ -313,7 +313,7 @@ int llopen(LinkLayer connectionParameters)
 
         if(general_state == SET_UA) return -1;
         else
-            return fd;
+            return fdd;
     }
 
     if(connectionParameters.role == LlRx){
@@ -322,7 +322,7 @@ int llopen(LinkLayer connectionParameters)
     while (STOP == FALSE && general_state == SET_UA)
     {
         // Returns after 5 chars have been input
-        int bytes = read(fd, bufc, 1);
+        int bytes = read(fdd, bufc, 1);
         bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
         switch(state){
@@ -377,7 +377,7 @@ int llopen(LinkLayer connectionParameters)
                 bufc[3] = 0x01 ^ 0x07; // bcc1
                 bufc[4] = FLAG; 
                 bufc[5] = '\n';
-                int bytes = write(fd, bufc, BUF_SIZE);
+                int bytes = write(fdd, bufc, BUF_SIZE);
                 printf("%d bytes written\n", bytes);
 
                 STOP = TRUE;
@@ -385,8 +385,8 @@ int llopen(LinkLayer connectionParameters)
                 break;
         }
     }
-    return fd;
     }
+    return fdd;
 }
 
 
@@ -440,7 +440,7 @@ int llread(unsigned char *packet)
     while ((STOP == FALSE) && (general_state == I_RR))
     {
         // Returns after 5 chars have been input
-        int bytes = read(fd, bufc, 1);
+        int bytes = read(fdd, bufc, 1);
         bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
         switch(state_ack){
             case START_ack:
@@ -536,7 +536,7 @@ int llread(unsigned char *packet)
                 bufc[5] = '\n';
                 for (int i = 0; i < 1; i++)
                     printf("0x%02X ", bufc[i]);
-                int bytes = write(fd, bufc, BUF_SIZE);
+                int bytes = write(fdd, bufc, BUF_SIZE);
                 printf("%d bytes written\n", bytes);
                 printf("stop\n");
                 STOP = TRUE;
@@ -588,10 +588,10 @@ int llclose(int showStatistics)
         send_supervision_frame();
 
     } else if(curr_role == LlRx){
-        general_state == DISC;
+        general_state = DISC;
         while (STOP == FALSE && general_state == DISC){
         // Returns after 5 chars have been input
-        int bytes = read(fd, bufc, 1);
+        int bytes = read(fdd, bufc, 1);
         bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
         switch(state){
@@ -646,7 +646,7 @@ int llclose(int showStatistics)
                 bufc[3] = 0x01 ^ 0x0B; // bcc1
                 bufc[4] = FLAG; 
                 bufc[5] = '\n';
-                int bytes = write(fd, bufc, BUF_SIZE);
+                int bytes = write(fdd, bufc, BUF_SIZE);
                 printf("%d bytes written\n", bytes);
 
                 STOP = TRUE;
@@ -660,7 +660,7 @@ int llclose(int showStatistics)
 
     while (STOP == FALSE && general_state == END){
         // Returns after 5 chars have been input
-        int bytes = read(fd, bufc, 1);
+        int bytes = read(fdd, bufc, 1);
         bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
         switch(state){
