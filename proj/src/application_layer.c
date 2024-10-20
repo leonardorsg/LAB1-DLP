@@ -20,7 +20,9 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     connectionParameters.nRetransmissions = nTries;
     connectionParameters.role = this_role;
     connectionParameters.timeout = timeout;
-    *connectionParameters.serialPort = serialPort;
+    strcpy(connectionParameters.serialPort, serialPort);
+
+    // *connectionParameters.serialPort = serialPort;
 
     if(llopen(connectionParameters) < 0) printf("Error in open\n");
 
