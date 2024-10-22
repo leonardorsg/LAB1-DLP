@@ -72,14 +72,14 @@ void send_supervision_frame(){
     int responseBytes = read(fdd, responseBuf, BUF_SIZE);
 
     if (responseBytes > 0) {
-        unsigned char a = bufc[1];
-        unsigned char c = bufc[2];
+        unsigned char a = responseBuf[1];
+        unsigned char c = responseBuf[2];
         unsigned char check = a ^ c;
-        unsigned char bcc = bufc[3];
+        unsigned char bcc = responseBuf[3];
 
         if(bcc != check){
             printf(" A ^ C != BCC1\n");
-            printf(":%s:%d\n", bufc, bytes);
+            printf("responseBytes %d\n", responseBytes);
 
             for (int i = 0; i < 5; i++) 
                 printf("0x%02X \n", responseBuf[i]);
@@ -87,7 +87,7 @@ void send_supervision_frame(){
         } else {
             if(general_state == SET_UA){
                 printf("UA received!\n");
-                printf(":%s:%d\n", bufc, bytes);
+                printf("responseBytes %d\n", responseBytes);
 
                 for (int i = 0; i < 5; i++) 
                     printf("0x%02X \n", responseBuf[i]);
@@ -319,73 +319,75 @@ int llopen(LinkLayer connectionParameters)
     if(connectionParameters.role == LlRx){
         curr_role = LlRx;
 
-    while (STOP == FALSE && general_state == SET_UA)
-    {
-        // Returns after 5 chars have been input
-        int bytes = read(fdd, bufc, 1);
-        bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+        while (STOP == FALSE && general_state == SET_UA)
+        {
+            int bytes = read(fdd, bufc, 1);
+            bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
-        switch(state){
-            case START:
-                if(bufc[0] == FLAG){
-                    state = FLAG_RCV;
-                }
-            break;
-            case FLAG_RCV:
-                if(bufc[0] == A){
-                    state = A_RCV;
-                } else if (bufc[0] != FLAG) {
-                    state = START;
-                }
+            switch(state){
+                case START:
+                    if(bufc[0] == FLAG){
+                        state = FLAG_RCV;
+                    }
                 break;
+                case FLAG_RCV:
+                    if(bufc[0] == A){
+                        state = A_RCV;
+                    } else if (bufc[0] != FLAG) {
+                        state = START;
+                    }
+                    break;
 
-            case A_RCV:
-                if(bufc[0] == C){
-                    state = C_RCV;
-                } else if (bufc[0] == FLAG) {
-                    state = FLAG_RCV;
-                } else {
-                    state = START;
-                }
-                break;
-            case C_RCV:
-                if(bufc[0] == (A ^ C)){
-                    state = BCC_OK;
-                } else if (bufc[0] == FLAG) {
-                    state = FLAG_RCV;
-                } else {
-                    state = START;
-                }
-                break;
-            case BCC_OK:
-                if(bufc[0] == FLAG){
-                    state = STOP_;
-                } else {
-                    state = START;
-                }
-                break;
-            case STOP_:
-                printf("SET acknowledged!\n");
-                printf(":%s:%d\n", bufc, bytes);
+                case A_RCV:
+                    if(bufc[0] == C){
+                        state = C_RCV;
+                    } else if (bufc[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case C_RCV:
+                    if(bufc[0] == (A ^ C)){
+                        state = BCC_OK;
+                    } else if (bufc[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case BCC_OK:
+                    if(bufc[0] == FLAG){
+                        state = STOP_;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case STOP_:
+                    printf("SET acknowledged!\n");
+                    printf(":%s:%d\n", bufc, bytes);
 
-                for (int i = 0; i < 5; i++)
-                    printf("0x%02X ", bufc[i]);
+                
 
-                bufc[0] = FLAG; 
-                bufc[1] = 0x01; // A
-                bufc[2] = 0x07; // C
-                bufc[3] = 0x01 ^ 0x07; // bcc1
-                bufc[4] = FLAG; 
-                bufc[5] = '\n';
-                int bytes = write(fdd, bufc, BUF_SIZE);
-                printf("%d bytes written\n", bytes);
+                    bufc[0] = FLAG; 
+                    bufc[1] = 0x01; // A
+                    bufc[2] = 0x07; // C
+                    bufc[3] = 0x01 ^ 0x07; // bcc1
+                    bufc[4] = FLAG; 
+                    bufc[5] = '\n';
+                    int bytes = write(fdd, bufc, BUF_SIZE);
 
-                STOP = TRUE;
-                general_state = I_RR;
-                break;
+                    printf("%d bytes written\n", bytes);
+                    for (int i = 0; i < 5; i++)
+                        printf("0x%02X ", bufc[i]);
+
+                    STOP = TRUE;
+                    general_state = I_RR;
+                    break;
+            }
         }
     }
-    }
+    
     return fdd;
 }
 
@@ -436,6 +438,8 @@ int llread(unsigned char *packet)
     unsigned char rr_signal = 0x12;
     unsigned char counter = ESC;
     state_ack = START_ack;
+    unsigned char aux_buf[BUF_SIZE + 1] = {0};
+    int count = 0;
 
     while ((STOP == FALSE) && (general_state == I_RR))
     {
@@ -511,15 +515,21 @@ int llread(unsigned char *packet)
                         }else{
                             counter = bufc[0];
                             bcc2_value ^= bufc[0];
+                            aux_buf[count] = bcc2_value;
+                            count++;
                         }
                     }
                     else {
                         is_esc = FALSE;
                         if (bufc[0] == 0x5e){
                             bcc2_value ^= 0x7e;
+                            aux_buf[count] = bcc2_value;
+                            count++;
 
                         } else if(bufc[0] == 0x5d){
                             bcc2_value ^= 0x7d;
+                            aux_buf[count] = bcc2_value;
+                            count++;
                         }
                     }
                 }
@@ -544,7 +554,11 @@ int llread(unsigned char *packet)
         }
     }
 
-    return 0;
+    for(int i = 0; i < count;i++){
+        packet[i] = aux_buf[i];
+    }
+
+    return count-1;
 }
 
 ////////////////////////////////////////////////
