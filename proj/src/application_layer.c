@@ -40,12 +40,13 @@ void sendFrames(unsigned char *fileData, size_t fileSize) {
     
     int length = 0;
     int currentFileSize = fileSize;
+    int sequence_number;
 
     unsigned char controlPacket[MAX_FRAME_SIZE + 4]; 
     controlPacket[0] = 0x01;
     controlPacket[1] = 0x00; 
 
-    // Calculate the length of the control packet in bytes
+    // Calculate the length of the file in bytes
     while (currentFileSize > 0)
     {
         int rest = currentFileSize % 256;
@@ -75,16 +76,32 @@ void sendFrames(unsigned char *fileData, size_t fileSize) {
 
         // Copy the frame data from the file data
         unsigned char frame[MAX_FRAME_SIZE];
+        frame[0] = 0x10; //C = 2 -> send data
+        sequence_number = (sequence_number + 1) % 100;
+        frame[1] = (unsigned char)sequence_number;
+        int l1 = frameSize % 256;
+        int l2 = frameSize / 256;
+        frame[2] = (unsigned char)l1;
+        frame[3] = (unsigned char)l2;
+
+        //ta certo isso??
         for (size_t i = 0; i < frameSize; i++) {
-            frame[i] = fileData[bytesSent + i];
+            frame[i+4] = fileData[bytesSent + i];
         }
 
         printf("Transmitting frame: %zu bytes\n", frameSize);
-        llwrite(frame, frameSize);
+        llwrite(frame, frameSize+4);
 
         // Update the number of bytes sent
         bytesSent += frameSize;
     }
+
+
+    //Send end control packet
+    controlPacket[0] = 0x11;
+    
+    llwrite(controlPacket, controlPacketSize);
+
 }
 
 void receiveFrames(const char *filename) {
@@ -95,26 +112,69 @@ void receiveFrames(const char *filename) {
     }
 
     unsigned char frame[MAX_FRAME_SIZE];
-    size_t frameSize;
-    bool receiving = true;
+    size_t totalSize = 0;
+    int fileSize = 0;
+    int receiving = TRUE;
+    int expectedSequenceNumber = 0;
 
     while (receiving) {
         int bytesRead = llread(frame);
         if (bytesRead < 0) {
             printf("Error reading frame\n");
             return;
-        } else if (bytesRead == 0) {
+        } 
+        //talvez nao precise deste elif
+        else if (bytesRead == 0) {
             printf("End of transmission\n");
+            receiving = FALSE;
             break;
         } else { //
-            int fileSize = frame[3];
+            if(frame[0] == 0x01){
+                int length = (int)frame[2];
+
+
+                for (int i = 0; i < length; i++)
+                {
+                    fileSize = fileSize * 256 + (int)frame[3 + i];
+                }
+            } else if(frame[0] == 0x10){
+                int sequenceNumber = (int)frame[1];
+                if(sequenceNumber != expectedSequenceNumber) {
+                    printf("Unexpected sequence number\n");
+                    break;
+                } else {
+                    expectedSequenceNumber = (expectedSequenceNumber + 1) % 100;
+                    int l1 = (int)frame[2];
+                    int l2 = (int)frame[3];
+                    size_t frameSize = 256 * l2 + l1;
+
+                    unsigned char data[MAX_FRAME_SIZE];
+
+                    for(int i = 0; i < frameSize; i++){
+                        data[i] = frame[i + 4];
+                    }
+
+                    int dataLength = bytesRead - 4;
+
+                    if (fwrite(data, sizeof(unsigned char), dataLength, filename) != dataLength)
+                    {
+                        return -1;
+                    }
+                }
+
+            } else if (frame[0] == 0x11){
+                receiving = FALSE;
+            }
 
         }
 
-        frameSize += bytesRead;
+        totalSize += bytesRead ;
     }
 
-    printf("Received %zu bytes\n", frameSize);
+
+    if(fileSize == totalSize) printf("Sucessful read! All bytes were read.\n");
+
+    printf("Received %zu bytes\n", totalSize);
 }
 
 
@@ -151,5 +211,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     } else {
         receiveFrames(filename);
     }
+
+    if(llclose(1) < 0) printf("Error in close\n");
 
 }

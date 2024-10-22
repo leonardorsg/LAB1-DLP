@@ -558,7 +558,7 @@ int llread(unsigned char *packet)
         packet[i] = aux_buf[i];
     }
 
-    return count-1;
+    return (count-1)/8;
 }
 
 ////////////////////////////////////////////////
