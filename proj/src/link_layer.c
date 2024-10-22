@@ -364,10 +364,9 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case STOP_:
-                    printf("SET acknowledged!\n");
-                    printf(":%s:%d\n", bufc, bytes);
 
-                
+                    printf("SET acknowledged!\n");
+            
 
                     bufc[0] = FLAG; 
                     bufc[1] = 0x01; // A
@@ -446,6 +445,7 @@ int llread(unsigned char *packet)
         // Returns after 5 chars have been input
         int bytes = read(fdd, bufc, 1);
         bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
         switch(state_ack){
             case START_ack:
                 if(bufc[0] == FLAG){
@@ -544,11 +544,16 @@ int llread(unsigned char *packet)
                 bufc[3] = 0x01 ^ rr_signal; // bcc1
                 bufc[4] = FLAG; 
                 bufc[5] = '\n';
-                for (int i = 0; i < 1; i++)
-                    printf("0x%02X ", bufc[i]);
+
+
                 int bytes = write(fdd, bufc, BUF_SIZE);
                 printf("%d bytes written\n", bytes);
-                printf("stop\n");
+
+                for (int i = 0; i < 5; i++)
+                    printf("0x%02X ", bufc[i]);
+
+
+                printf("\n Setting STOP=TRUE\n");
                 STOP = TRUE;
                 break;
         }
