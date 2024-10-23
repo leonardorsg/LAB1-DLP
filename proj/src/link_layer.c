@@ -159,13 +159,8 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     bufc[pos] = bcc2;
     bufc[pos+1] = FLAG;
 
-    printf("bufc to send: \n");
-    for (int i = 0; i < frameSize + 6; i++) 
-        printf("bufc[%d]: 0x%02X \n", i, bufc[i]);
-
     int bytes = write(fdd, bufc, BUF_SIZE);
-    printf("%d bytes written during llwrite\n", bytes);
-
+    
     if (alarmEnabled == FALSE) {
         printf("Setting alarm, alarmCount = %d\n", alarmCount);
         alarm(3); // Set alarm to be triggered in 3s
@@ -176,11 +171,10 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     unsigned char responseBuf[BUF_SIZE];
     int responseBytes = read(fdd, responseBuf, BUF_SIZE);
 
-    printf(" fdd value: %d\n", fdd);
-
     printf(" We just read %d bytes: \n", responseBytes);
     for (int i = 0; i < 6; i++) 
-        printf("responseBuf[%d]: 0x%02X \n", i, responseBuf[i]);
+        printf("[%d]: 0x%02X ", i, responseBuf[i]);
+    printf("\n");
 
     if (responseBytes > 0) {
         unsigned char a = responseBuf[1];
@@ -222,10 +216,10 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
             if (rr != i_value){  // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
                 changed_i = TRUE;
-                printf("CHANGED i_value to %d\n", i_value);
+                printf("CHANGED i to %d\n", i_value);
                 return 0;
             } else
-                printf("Keeping i = %d, alarmCount = %d\n", i_value, alarmCount);
+                printf("KEPT i = %d\n", i_value);
             
         }
     } else {
@@ -469,7 +463,6 @@ int llread(unsigned char *packet)
                 if((bufc[0] == 0x00) || (bufc[0] == 0x80)){
                     state_ack = C_RCV_ack;
                     i_signal = bufc[0];
-                    // printf("A_RCV_ack to C_RCV_ack, i_signal = %x\n", i_signal);
                 } else if (bufc[0] == FLAG) {
                     state_ack = FLAG_RCV_ack;
                     // printf("a to flag t\n");
@@ -495,20 +488,17 @@ int llread(unsigned char *packet)
                     bcc2_value ^= counter;
                     if(bcc2_value == counter){
                         state_ack = STOP_ack;
-                        printf("bcc2_value == counter \n");
-                        if(i_signal == 0x00){
-                            rr_signal = 0xAB;
-                        } else if(i_signal == 0x80){
-                            rr_signal = 0xAA;
-                        }
+
+                        if (i_signal == 0x00) rr_signal = 0xAB;
+                        else if (i_signal == 0x80) rr_signal = 0xAA;
+
+                        printf("RIGHT BCC2, i_signal 0x%02X, so rr= 0x%02X\n", i_signal, rr_signal);
                     } else{
                         state_ack = STOP_ack;
-                        printf("bcc2_value != counter \n");
-                        if(i_signal == 0x00){
-                            rr_signal = 0x54;
-                        } else if(i_signal == 0x80){
-                            rr_signal = 0x55;
-                        }
+                        if (i_signal == 0x00) rr_signal = 0x54;
+                        else if (i_signal == 0x80) rr_signal = 0x55;
+
+                        printf("WRONG BCC2, i_signal 0x%02X, so rr= 0x%02X\n", i_signal, rr_signal);
                     }
                 } else {
                     if(!is_esc){
@@ -547,21 +537,14 @@ int llread(unsigned char *packet)
                 bufc[5] = '\n';
 
                 int bytes = write(fdd, bufc, BUF_SIZE);
-                printf("Sent response %d bytes:\n", bytes);
-
-                for (int i = 0; i < 6; i++)
-                    printf("bufc[%d]: 0x%02X ", i, bufc[i]);
-                printf("\n\n");
 
                 STOP = TRUE;
                 break;
         }
     }
 
-    printf("Building packet: \n");
     for(int i = 0; i < count-1;i++){
         packet[i] = aux_buf[i];
-        printf("packet[%d]: 0x%02X\n", i, packet[i]);
     }
 
     return count-1;

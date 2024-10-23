@@ -41,7 +41,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
     
     int length = 0;
     int currentFileSize = fileSize;
-    int sequence_number;
+    int sequence_number = -1; // Starting with -1 so that the first sequence number is 0
 
     unsigned char controlPacket[MAX_PACKET_SIZE]; 
     controlPacket[0] = 0x01;
@@ -82,12 +82,11 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
 
     if (llwrite(controlPacket, controlPacketSize)<0) {
         // TODO: what should we do in this case?
-        printf("Did not recognize a reply from the receiver about the Control Packet.\n");
-        printf("Exiting sendPackets function...\n");
+        printf("Did not recognize a reply from the receiver about the Control Packet.\n Exiting sendPackets function...\n");
         return;
     }
 
-    printf("We will send %ld packets", fileSize/MAX_FRAME_SIZE);
+    printf("We will send %ld data packets. \n ", fileSize/MAX_FRAME_SIZE);
 
     size_t bytesSent = 0;
     while (bytesSent < fileSize) {
@@ -97,7 +96,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
         // Copy the frame data from the file data
         unsigned char packet[frameSize+4];
 
-        packet[0] = 0x02; //C = 2 -> send data
+        packet[0] = 0x02; // C = 2 -> send data
         sequence_number = (sequence_number + 1) % 100;
         packet[1] = (unsigned char)sequence_number;
 
@@ -149,7 +148,7 @@ void receivePackets(const char *filename) {
 
             if(packet[0] == 0x01){ // START CONTROL PACKET
 
-                printf("Received start control packet %d bytes: \n", bytesRead);
+                printf("Received start control packet %d bytes \n", bytesRead);
              
                 int length = (int)packet[2];
 
@@ -157,7 +156,7 @@ void receivePackets(const char *filename) {
                 fileSize = 0;
                 for (int i = 0; i < length; i++)
                 {
-                    printf("for size, used: packet[%d]: 0x%02X \n", i + 3, packet[i + 3]);
+                    printf("packet[%d]: 0x%02X \n", i + 3, packet[i + 3]);
                     fileSize = fileSize * 256 + (int)packet[3 + i];
                 }
 
@@ -165,12 +164,13 @@ void receivePackets(const char *filename) {
 
             } else if(packet[0] == 0x02){ // DATA PACKETS
 
-                printf("Received data packet\n");
+                printf("Received and acknowledged data packet. \n");
 
                 int sequenceNumber = (int)packet[1];
                 if(sequenceNumber != expectedSequenceNumber) {
 
-                    printf("Unexpected sequence number\n");
+                    printf("Received sequence number: %d\n", sequenceNumber);
+                    printf("Expected sequence number: %d\n", expectedSequenceNumber);
                     break;
 
                 } else {
@@ -185,18 +185,12 @@ void receivePackets(const char *filename) {
                         data[i] = packet[i + 4];
                     }
 
-                    printf("data to be written: \n");
-                    for(int i = 0; i < frameSize; i++){
-                        printf("data[%d]: 0x%02X", i, data[i]);
-                    }
-                    printf("\n");
-
                     if (fwrite(data, sizeof(unsigned char), frameSize, file) != frameSize)
                     {
                         printf(" ERROR: Could not correctly write data");
                         return;
                     } else {
-                        printf("Data written to file\n");
+                        printf("Data %d written to file\n", sequenceNumber);
                     }
                 }
 
@@ -213,7 +207,7 @@ void receivePackets(const char *filename) {
     }
 
     if(fileSize == totalSize) printf("Sucessful read! All bytes were read.\n");
-    else printf("fileSize (%ld) != totalSize (%ld)", fileSize, totalSize);
+    else printf("fileSize (%ld) != totalSize (%ld) \n", fileSize, totalSize);
 
     printf("Received %zu bytes\n", totalSize);
 }
