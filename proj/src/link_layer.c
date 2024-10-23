@@ -58,6 +58,7 @@ size_t frame_sizes[] = {sizeof(frame0), sizeof(frame1)};
 
 LinkLayerRole curr_role;
 
+int changed_i = FALSE;
 
 void send_supervision_frame(){
     
@@ -117,7 +118,7 @@ void setOffAlarm(){
     alarmCount = 0;
 }
 
-void send_information(const unsigned char *selectedFrame, int frameSize){
+int send_information(const unsigned char *selectedFrame, int frameSize){
 
     // Create string to send
     bufc[0] = FLAG; 
@@ -220,7 +221,9 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
 
             if (rr != i_value){  // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
-                printf("just changed i_value to %d\n", i_value);
+                changed_i = TRUE;
+                printf("CHANGED i_value to %d\n", i_value);
+                return 0;
             } else
                 printf("Keeping i = %d, alarmCount = %d\n", i_value, alarmCount);
             
@@ -228,6 +231,7 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
     } else {
         printf("No response received,  %d  alarmCount = %d \n", i_value, alarmCount);
     }
+    return 1;
 }
 
 // Alarm function handler
@@ -395,13 +399,18 @@ int llwrite(const unsigned char *buf, int bufSize)
     for(int i=0; i < bufSize; i++){
         curr_buf[i] = buf[i];
     }
+    
+    changed_i = FALSE;
 
     printf("general state: %d\n", general_state);
     
-    while (alarmCount < 3 && general_state == I_RR){
+    while (alarmCount < 3 && general_state == I_RR && changed_i==FALSE){
         if (!alarmEnabled){
             printf("Alarm disabled, writing frame %d\n", i_value);
-            send_information(buf, bufSize);
+            
+            if(send_information(buf, bufSize)==0) {
+                printf("changed_i : %d\n", changed_i);
+            }
         }
     }
 
