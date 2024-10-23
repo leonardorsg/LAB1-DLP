@@ -68,6 +68,7 @@ void sendFrames(unsigned char *fileData, size_t fileSize) {
     int controlPacketSize = 3 + length;
 
     llwrite(controlPacket, controlPacketSize);
+    printf("Writing control packet \n");
     
     size_t bytesSent = 0;
     while (bytesSent < fileSize) {
@@ -124,11 +125,14 @@ void receiveFrames(const char *filename) {
             return;
         } 
         //talvez nao precise deste elif
+        /*
         else if (bytesRead == 0) {
             printf("End of transmission\n");
             receiving = FALSE;
             break;
-        } else { //
+        } 
+        */
+        else { //
             if(frame[0] == 0x01){
                 int length = (int)frame[2];
 
@@ -156,10 +160,12 @@ void receiveFrames(const char *filename) {
 
                     int dataLength = bytesRead - 4;
 
-                    if (fwrite(data, sizeof(unsigned char), dataLength, filename) != dataLength)
+
+                    if (fwrite(data, sizeof(unsigned char), dataLength, file) != dataLength)
                     {
-                        return -1;
+                        printf("error in write data\n");
                     }
+                    printf("writing data\n");
                 }
 
             } else if (frame[0] == 0x11){
@@ -173,7 +179,7 @@ void receiveFrames(const char *filename) {
 
 
     if(fileSize == totalSize) printf("Sucessful read! All bytes were read.\n");
-
+    else printf("Error! filesize != totalsize");
     printf("Received %zu bytes\n", totalSize);
 }
 
@@ -203,7 +209,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         size_t fileSize;
         unsigned char *fileData = readFile(filename, &fileSize);
 
-        if (!fileData) return 1; // Error reading file
+        if (!fileData) return ; // Error reading file
 
         sendFrames(fileData, fileSize);
         
