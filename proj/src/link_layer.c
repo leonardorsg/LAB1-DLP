@@ -155,15 +155,12 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
         bcc2 ^= selectedFrame[j];
     }
 
-// frame0 = {0x01,0x04,0x29};
-// frame1 = {0x02,0x04,0x29};
-
     bufc[pos] = bcc2;
     bufc[pos+1] = FLAG;
 
-    printf("buf to send: \n");
+    printf("bufc to send: \n");
     for (int i = 0; i < frameSize + 6; i++) 
-        printf("buf[%d]: 0x%02X \n", i, bufc[i]);
+        printf("bufc[%d]: 0x%02X \n", i, bufc[i]);
 
     int bytes = write(fdd, bufc, BUF_SIZE);
     printf("%d bytes written during llwrite\n", bytes);
@@ -178,6 +175,12 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
     unsigned char responseBuf[BUF_SIZE];
     int responseBytes = read(fdd, responseBuf, BUF_SIZE);
 
+    printf(" fdd value: %d\n", fdd);
+
+    printf(" We just read %d bytes: \n", responseBytes);
+    for (int i = 0; i < 6; i++) 
+        printf("responseBuf[%d]: 0x%02X \n", i, responseBuf[i]);
+
     if (responseBytes > 0) {
         unsigned char a = responseBuf[1];
         unsigned char c = responseBuf[2];
@@ -186,16 +189,9 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
 
         if(bcc != check){
             printf(" A ^ C != BCC1\n");
-            printf(":%s:%d\n", responseBuf, bytes);
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X \n", responseBuf[i]);
             
         } else {
             printf(" bcc==check! \n");
-            printf(":%s:%d\n", responseBuf, bytes);
-
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X \n", responseBuf[i]);  
 
             switch (c) {
                 case 0x54:
@@ -225,13 +221,8 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
             if (rr != i_value){  // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
                 printf("just changed i_value to %d\n", i_value);
-
-            } 
-            // else    // If the received RR is the same as the sent I, we keep i_value
-            //     printf("Keeping i = %d, alarmCount = %d\n", i_value, alarmCount);
-
-            // by default, the next I is the same as the previous one
-            printf("next i = %d\n", i_value); 
+            } else
+                printf("Keeping i = %d, alarmCount = %d\n", i_value, alarmCount);
             
         }
     } else {
@@ -277,10 +268,8 @@ int llopen(LinkLayer connectionParameters)
 {
     fdd = openSerialPort(connectionParameters.serialPort,
                        connectionParameters.baudRate);
-    if (fdd < 0)
-    {
-        return -1;
-    }
+
+    if (fdd < 0) return -1;
 
     printf("New termios structure set\n");
 
@@ -376,9 +365,10 @@ int llopen(LinkLayer connectionParameters)
                     bufc[5] = '\n';
                     int bytes = write(fdd, bufc, BUF_SIZE);
 
-                    printf("%d bytes written\n", bytes);
+                    printf("Sent UA, %d bytes written:", bytes);
                     for (int i = 0; i < 5; i++)
                         printf("0x%02X ", bufc[i]);
+                    printf("\n");
 
                     STOP = TRUE;
                     general_state = I_RR;
@@ -406,6 +396,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         curr_buf[i] = buf[i];
     }
 
+    printf("general state: %d\n", general_state);
     
     while (alarmCount < 3 && general_state == I_RR){
         if (!alarmEnabled){
@@ -419,8 +410,10 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     curr_buf_size = 0;
 
-    //send bytes written is success and -1 if failure
-    printf("Exausted all attempts\n");
+    if (alarmCount>=3){
+        printf("Exausted all attempts\n");
+        return -1; 
+    } 
 
     return 0;
 }
@@ -456,10 +449,10 @@ int llread(unsigned char *packet)
             case FLAG_RCV_ack:
                 if(bufc[0] == A){
                     state_ack  = A_RCV_ack;
-                    printf("flag to a\n");
+                    // printf("flag to a\n");
                 } else if (bufc[0] != FLAG) {
                     state_ack  = START_ack;
-                    printf("flag to start\n");
+                    // printf("flag to start\n");
                 }
                 break;
 
@@ -467,25 +460,25 @@ int llread(unsigned char *packet)
                 if((bufc[0] == 0x00) || (bufc[0] == 0x80)){
                     state_ack = C_RCV_ack;
                     i_signal = bufc[0];
-                    printf("A_RCV_ack to C_RCV_ack, i_signal = %x\n", i_signal);
+                    // printf("A_RCV_ack to C_RCV_ack, i_signal = %x\n", i_signal);
                 } else if (bufc[0] == FLAG) {
                     state_ack = FLAG_RCV_ack;
-                    printf("a to flag t\n");
+                    // printf("a to flag t\n");
                 } else {
                     state_ack = START_ack;
-                    printf("a to start\n");
+                    // printf("a to start\n");
                 }
                 break;
             case C_RCV:
                 if(bufc[0] == (A ^ i_signal)){
                     state_ack  = BCC1_OK_ack;
-                    printf("c to bcc1\n");
+                    // printf("c to bcc1\n");
                 } else if (bufc[0] == FLAG) {
                     state_ack  = FLAG_RCV_ack;
-                    printf("c to flag\n");
+                    // printf("c to flag\n");
                 } else {
                     state_ack = START_ack;
-                    printf("c to to start\n");
+                    // printf("c to to start\n");
                 }
                 break;
             case BCC1_OK_ack:
@@ -493,7 +486,7 @@ int llread(unsigned char *packet)
                     bcc2_value ^= counter;
                     if(bcc2_value == counter){
                         state_ack = STOP_ack;
-                        printf("bcc1 to stop\n");
+                        printf("bcc2_value == counter \n");
                         if(i_signal == 0x00){
                             rr_signal = 0xAB;
                         } else if(i_signal == 0x80){
@@ -501,7 +494,7 @@ int llread(unsigned char *packet)
                         }
                     } else{
                         state_ack = STOP_ack;
-                        printf("bcc1 to stop\n");
+                        printf("bcc2_value != counter \n");
                         if(i_signal == 0x00){
                             rr_signal = 0x54;
                         } else if(i_signal == 0x80){
@@ -515,20 +508,20 @@ int llread(unsigned char *packet)
                         }else{
                             counter = bufc[0];
                             bcc2_value ^= bufc[0];
-                            aux_buf[count] = bcc2_value;
+                            aux_buf[count] = bufc[0];
                             count++;
                         }
                     }
                     else {
                         is_esc = FALSE;
                         if (bufc[0] == 0x5e){
-                            bcc2_value ^= 0x7e;
-                            aux_buf[count] = bcc2_value;
+                            bcc2_value ^= FLAG;
+                            aux_buf[count] = FLAG;
                             count++;
 
                         } else if(bufc[0] == 0x5d){
-                            bcc2_value ^= 0x7d;
-                            aux_buf[count] = bcc2_value;
+                            bcc2_value ^= ESC;
+                            aux_buf[count] = ESC;
                             count++;
                         }
                     }
@@ -536,7 +529,6 @@ int llread(unsigned char *packet)
                 break;
             case STOP_ack:
                 printf("FRAME acknowledged!\n");
-            
 
                 bufc[0] = FLAG; 
                 bufc[1] = 0x01; // A
@@ -545,25 +537,25 @@ int llread(unsigned char *packet)
                 bufc[4] = FLAG; 
                 bufc[5] = '\n';
 
-
                 int bytes = write(fdd, bufc, BUF_SIZE);
-                printf("%d bytes written\n", bytes);
+                printf("Sent response %d bytes:\n", bytes);
 
-                for (int i = 0; i < 5; i++)
-                    printf("0x%02X ", bufc[i]);
+                for (int i = 0; i < 6; i++)
+                    printf("bufc[%d]: 0x%02X ", i, bufc[i]);
+                printf("\n\n");
 
-
-                printf("\n Setting STOP=TRUE\n");
                 STOP = TRUE;
                 break;
         }
     }
 
-    for(int i = 0; i < count;i++){
+    printf("Building packet: \n");
+    for(int i = 0; i < count-1;i++){
         packet[i] = aux_buf[i];
+        printf("packet[%d]: 0x%02X\n", i, packet[i]);
     }
 
-    return (count-1)/8;
+    return count-1;
 }
 
 ////////////////////////////////////////////////

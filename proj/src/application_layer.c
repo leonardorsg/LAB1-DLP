@@ -62,15 +62,32 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
 
         currentFileSize = div;
     }
+
+    printf("size message to be sent: \n");
+    for (int i = 0; i < length; i++)
+    {
+        printf("controlPacket[%d]: 0x%02X \n", i + 3, controlPacket[i + 3]);
+    }
     
     
     controlPacket[2] = (unsigned char)length;
 
     int controlPacketSize = 3 + length;
 
-    llwrite(controlPacket, controlPacketSize);
-    
-    printf("We will send %d packets", fileSize/MAX_FRAME_SIZE);
+    printf(" Will send control packet now with %d bytes: \n", controlPacketSize);
+    for (int i=0; i<controlPacketSize;i++){
+        printf("controlPacket[%d]: 0x%02X ", i, controlPacket[i]);
+    }
+    printf("\n");
+
+    if (llwrite(controlPacket, controlPacketSize)<0) {
+        // TODO: what should we do in this case?
+        printf("Did not recognize a reply from the receiver about the Control Packet.\n");
+        printf("Exiting sendPackets function...\n");
+        return;
+    }
+
+    printf("We will send %ld packets", fileSize/MAX_FRAME_SIZE);
 
     size_t bytesSent = 0;
     while (bytesSent < fileSize) {
@@ -118,7 +135,7 @@ void receivePackets(const char *filename) {
 
     unsigned char packet[MAX_PACKET_SIZE];
     size_t totalSize = 0;
-    int fileSize = 0;
+    size_t fileSize = 0;
     int receiving = TRUE;
     int expectedSequenceNumber = 0;
 
@@ -131,14 +148,24 @@ void receivePackets(const char *filename) {
         } else { 
 
             if(packet[0] == 0x01){ // START CONTROL PACKET
+
+                printf("Received start control packet %d bytes: \n", bytesRead);
+             
                 int length = (int)packet[2];
 
+                printf("Used for calculating size: \n");
+                fileSize = 0;
                 for (int i = 0; i < length; i++)
                 {
+                    printf("for size, used: packet[%d]: 0x%02X \n", i + 3, packet[i + 3]);
                     fileSize = fileSize * 256 + (int)packet[3 + i];
                 }
 
+                printf("Calculated fileSize to be %ld. \n", fileSize);
+
             } else if(packet[0] == 0x02){ // DATA PACKETS
+
+                printf("Received data packet\n");
 
                 int sequenceNumber = (int)packet[1];
                 if(sequenceNumber != expectedSequenceNumber) {
@@ -158,14 +185,25 @@ void receivePackets(const char *filename) {
                         data[i] = packet[i + 4];
                     }
 
+                    printf("data to be written: \n");
+                    for(int i = 0; i < frameSize; i++){
+                        printf("data[%d]: 0x%02X", i, data[i]);
+                    }
+                    printf("\n");
+
                     if (fwrite(data, sizeof(unsigned char), frameSize, file) != frameSize)
                     {
                         printf(" ERROR: Could not correctly write data");
                         return;
+                    } else {
+                        printf("Data written to file\n");
                     }
                 }
 
-            } else if (packet[0] == 0x03){
+            } else if (packet[0] == 0x03){ // END CONTROL PACKET
+
+                printf("Received end control packet\n");
+
                 receiving = FALSE;
             }
 
@@ -174,9 +212,8 @@ void receivePackets(const char *filename) {
         totalSize += bytesRead ;
     }
 
-
     if(fileSize == totalSize) printf("Sucessful read! All bytes were read.\n");
-    else printf("fileSize (%d) != totalSize (%ld)", fileSize, totalSize);
+    else printf("fileSize (%ld) != totalSize (%ld)", fileSize, totalSize);
 
     printf("Received %zu bytes\n", totalSize);
 }
@@ -201,7 +238,12 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     // *connectionParameters.serialPort = serialPort;
 
-    if(llopen(connectionParameters) < 0) printf("Error in open\n");
+    if(llopen(connectionParameters) < 0) {
+        printf("Error in open, exiting...\n");
+        return;
+    }
+    else 
+        printf(" Successfully opened connection with llopen() \n");
     
     if (this_role == LlTx) {
         size_t fileSize;
@@ -212,7 +254,9 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             return;
         }; 
 
+        printf("The file has %ld size. \n", fileSize);
         sendPackets(fileData, fileSize);
+        printf("Finished with sendPackets function.\n");
         
         free(fileData);
     } else {
@@ -220,5 +264,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     }
 
     if(llclose(1) < 0) printf("Error in close\n");
+    else printf("Successfully executed llclose()");
 
 }
