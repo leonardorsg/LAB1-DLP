@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define MAX_FRAME_SIZE 200
+#define MAX_FRAME_SIZE 100
 #define MAX_PACKET_SIZE 210
 
 unsigned char *readFile(const char *filename, size_t *fileSize) {
@@ -75,7 +75,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
         return;
     }
 
-    printf("\n ######### %ld DATA PACKETS ########### \n\n ", fileSize/MAX_FRAME_SIZE);
+    printf("\n ######### %ld DATA PACKETS ########### \n\n ", fileSize/MAX_FRAME_SIZE + 1);
 
     size_t bytesSent = 0;
     while (bytesSent < fileSize) {
@@ -99,7 +99,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
             packet[i+4] = fileData[bytesSent + i];
         }
 
-        printf("\n Transmitting packet #%d.\n\n", sequence_number);
+        printf("Transmitting packet #%d.\n", sequence_number);
         llwrite(packet, frameSize+4);
 
         // Update the number of bytes sent
@@ -172,15 +172,11 @@ void receivePackets(const char *filename) {
                         printf(" ERROR: Could not correctly write data");
                         return;
                     } else {
-                        totalSize += bytesRead ;
+                        totalSize += frameSize ;
                         printf("Data #%d written to file. \n", sequenceNumber);
-                        if (sequenceNumber == 54) printf("frameSize: %ld \n", frameSize);
                     }
                 } else if (sequenceNumber < expectedSequenceNumber){
                     // printf("Calibrating... \n\n");
-                }
-                else {
-                    printf("received (%d) > expected (%d) , so we are going to break. \n", sequenceNumber, expectedSequenceNumber);
                 }
 
             } else if (packet[0] == 0x03){ // END CONTROL PACKET

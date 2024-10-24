@@ -225,7 +225,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
             if (rr != i_value){  // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
                 changed_i = TRUE;
-                printf(" SWITCHING TO NEXT FRAME (%d)\n", i_value);
+                // printf("Switching i (%d)\n", i_value);
                 return 0;
             } 
             // else printf("kept i (%d)\n\n", i_value);    
@@ -243,7 +243,7 @@ void alarmHandler(int signal)
     alarmEnabled = FALSE;
     alarmCount++;
 
-    printf("\n Alarm #%d\n", alarmCount);
+    printf("Alarm #%d\n", alarmCount);
 
     // printf("General state: %d\n", general_state);
 
