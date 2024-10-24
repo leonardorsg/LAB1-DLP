@@ -6,7 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define MAX_FRAME_SIZE 1024
+#define MAX_FRAME_SIZE 100
+#define MAX_PACKET_SIZE 210
 
 unsigned char *readFile(const char *filename, size_t *fileSize) {
     FILE *file = fopen(filename, "rb"); // Open file in binary mode
@@ -36,13 +37,13 @@ unsigned char *readFile(const char *filename, size_t *fileSize) {
 }
 
 // Function to send frames to the receiver
-void sendFrames(unsigned char *fileData, size_t fileSize) {
+void sendPackets(unsigned char *fileData, size_t fileSize) {
     
     int length = 0;
     int currentFileSize = fileSize;
-    int sequence_number;
+    int sequence_number = -1; // Starting with -1 so that the first sequence number is 0
 
-    unsigned char controlPacket[MAX_FRAME_SIZE + 4]; 
+    unsigned char controlPacket[MAX_PACKET_SIZE]; 
     controlPacket[0] = 0x01;
     controlPacket[1] = 0x00; 
 
@@ -60,8 +61,7 @@ void sendFrames(unsigned char *fileData, size_t fileSize) {
         controlPacket[3] = (unsigned char)rest;
 
         currentFileSize = div;
-    }
-    
+    }    
     
     controlPacket[2] = (unsigned char)length;
 
@@ -70,59 +70,79 @@ void sendFrames(unsigned char *fileData, size_t fileSize) {
     llwrite(controlPacket, controlPacketSize);
     printf("Writing control packet \n");
     
+
+    printf("\n ######### CONTROL PACKET ########### \n\n ");
+
+    if (llwrite(controlPacket, controlPacketSize)<0) {
+        // TODO: what should we do in this case?
+        printf("Did not recognize a reply from the receiver about the Control Packet.\n Exiting sendPackets function...\n");
+        return;
+    }
+
+    printf("\n ######### %ld DATA PACKETS ########### \n\n ", fileSize/MAX_FRAME_SIZE + 1);
+
+
     size_t bytesSent = 0;
     while (bytesSent < fileSize) {
         // Calculate the size of the frame to send
         size_t frameSize = (fileSize - bytesSent > MAX_FRAME_SIZE) ? MAX_FRAME_SIZE : (fileSize - bytesSent);
 
         // Copy the frame data from the file data
-        unsigned char frame[MAX_FRAME_SIZE];
-        frame[0] = 0x10; //C = 2 -> send data
-        sequence_number = (sequence_number + 1) % 100;
-        frame[1] = (unsigned char)sequence_number;
-        int l1 = frameSize % 256;
-        int l2 = frameSize / 256;
-        frame[2] = (unsigned char)l1;
-        frame[3] = (unsigned char)l2;
+        unsigned char packet[frameSize+4];
 
-        //ta certo isso??
+        packet[0] = 0x02; // C = 2 -> send data
+        sequence_number = (sequence_number + 1) % 100;
+        packet[1] = (unsigned char)sequence_number;
+
+        int l2 = frameSize / 256; 
+        int l1 = frameSize % 256;
+
+        packet[2] = (unsigned char)l2;
+        packet[3] = (unsigned char)l1;
+
         for (size_t i = 0; i < frameSize; i++) {
-            frame[i+4] = fileData[bytesSent + i];
+            packet[i+4] = fileData[bytesSent + i];
         }
 
-        printf("Transmitting frame: %zu bytes\n", frameSize);
-        llwrite(frame, frameSize+4);
+        printf("Transmitting packet #%d.\n", sequence_number);
+        llwrite(packet, frameSize+4);
 
         // Update the number of bytes sent
         bytesSent += frameSize;
     }
 
+    printf("\n ######### END CONTROL PACKET ########### \n\n ");
 
     //Send end control packet
-    controlPacket[0] = 0x11;
+    controlPacket[0] = 0x03;
     
     llwrite(controlPacket, controlPacketSize);
 
 }
 
-void receiveFrames(const char *filename) {
+void receivePackets(const char *filename) {
+
+    printf(" \n\n ######### RECEIVING PACKETS ########### \n\n ");
+
     FILE *file = fopen(filename, "wb"); // Open file in binary mode
     if (!file) {
         perror("Error opening file");
         return;
     }
 
-    unsigned char frame[MAX_FRAME_SIZE];
+    unsigned char packet[MAX_PACKET_SIZE];
     size_t totalSize = 0;
-    int fileSize = 0;
+    size_t fileSize = 0;
     int receiving = TRUE;
     int expectedSequenceNumber = 0;
 
     while (receiving) {
-        int bytesRead = llread(frame);
+        int bytesRead = llread(packet);
+
         if (bytesRead < 0) {
-            printf("Error reading frame\n");
+            printf("Error reading packet\n");
             return;
+
         } 
         //talvez nao precise deste elif
         /*
@@ -132,31 +152,38 @@ void receiveFrames(const char *filename) {
             break;
         } 
         */
-        else { //
-            if(frame[0] == 0x01){
-                int length = (int)frame[2];
+        else { 
 
 
-                for (int i = 0; i < length; i++)
-                {
-                    fileSize = fileSize * 256 + (int)frame[3 + i];
+            if(packet[0] == 0x01){ // START CONTROL PACKET
+
+                printf("Control packet: %d bytes \n", bytesRead);
+             
+                int length = (int)packet[2];
+
+                fileSize = 0;
+                for (int i = 0; i < length; i++) {
+                    fileSize = fileSize * 256 + (int)packet[3 + i];
                 }
-            } else if(frame[0] == 0x10){
-                int sequenceNumber = (int)frame[1];
-                if(sequenceNumber != expectedSequenceNumber) {
-                    printf("Unexpected sequence number\n");
-                    break;
-                } else {
+
+                printf("Calculated fileSize to be %ld. \n\n", fileSize);
+
+            } else if(packet[0] == 0x02){ // DATA PACKETS
+
+                int sequenceNumber = (int)packet[1];
+
+                if(sequenceNumber == expectedSequenceNumber) {
                     expectedSequenceNumber = (expectedSequenceNumber + 1) % 100;
-                    int l1 = (int)frame[2];
-                    int l2 = (int)frame[3];
+                    int l2 = (int)packet[2];
+                    int l1 = (int)packet[3];
                     size_t frameSize = 256 * l2 + l1;
 
-                    unsigned char data[MAX_FRAME_SIZE];
+                    unsigned char data[frameSize];
 
                     for(int i = 0; i < frameSize; i++){
-                        data[i] = frame[i + 4];
+                        data[i] = packet[i + 4];
                     }
+
 
                     int dataLength = bytesRead - 4;
 
@@ -166,21 +193,40 @@ void receiveFrames(const char *filename) {
                         printf("error in write data\n");
                     }
                     printf("writing data\n");
+                    totalSize += frameSize ;
+                    /*
+
+                    if (fwrite(data, sizeof(unsigned char), frameSize, file) != frameSize) {
+                        printf(" ERROR: Could not correctly write data");
+                        return;
+                    } else {
+                        totalSize += frameSize ;
+                        printf("Data #%d written to file. \n", sequenceNumber);
+                    }
+                    */
+                } else if (sequenceNumber < expectedSequenceNumber){
+                    // printf("Calibrating... \n\n");
+
                 }
 
-            } else if (frame[0] == 0x11){
+            } else if (packet[0] == 0x03){ // END CONTROL PACKET
+
+                printf("Received end control packet\n");
+
                 receiving = FALSE;
             }
 
         }
-
-        totalSize += bytesRead ;
     }
+
+    if(fileSize == totalSize) printf("Sucessful read! All %ld bytes were read and written.\n", totalSize);
+    else printf("fileSize (%ld) != totalSize (%ld) \n", fileSize, totalSize);
 
 
     if(fileSize == totalSize) printf("Sucessful read! All bytes were read.\n");
     else printf("Error! filesize != totalsize");
     printf("Received %zu bytes\n", totalSize);
+
 }
 
 
@@ -203,21 +249,35 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     // *connectionParameters.serialPort = serialPort;
 
-    if(llopen(connectionParameters) < 0) printf("Error in open\n");
+    if(llopen(connectionParameters) < 0) {
+        printf("Error in open, exiting...\n");
+        return;
+    } 
     
     if (this_role == LlTx) {
         size_t fileSize;
         unsigned char *fileData = readFile(filename, &fileSize);
 
+
         if (!fileData) return ; // Error reading file
 
-        sendFrames(fileData, fileSize);
+        if (!fileData){
+            printf("ERROR reading file\n");
+            return;
+        }; 
+
+
+        printf("The file has size %ld. \n", fileSize);
+        sendPackets(fileData, fileSize);
+        printf("Finished with sendPackets function.\n");
         
         free(fileData);
     } else {
-        receiveFrames(filename);
+        receivePackets(filename);
     }
 
     if(llclose(1) < 0) printf("Error in close\n");
+    else printf("Successfully executed llclose()");
 
 }
+

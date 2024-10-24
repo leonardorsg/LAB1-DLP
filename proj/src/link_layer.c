@@ -58,19 +58,22 @@ size_t frame_sizes[] = {sizeof(frame0), sizeof(frame1)};
 
 LinkLayerRole curr_role;
 
+int changed_i = FALSE;
 
 void send_supervision_frame(){
     
-    int bytes = write(fdd, bufc, BUF_SIZE);
-    printf("%d bytes written\n", bytes);
+    int bytes = write(fdd, bufc, 5);
+    printf("%d bytes written in supervision frame\n", bytes);
 
     if(general_state == END) return;
 
     // Wait until all bytes have been written to the serial port
     
-    unsigned char responseBuf[BUF_SIZE];
-    int responseBytes = read(fdd, responseBuf, BUF_SIZE);
+    unsigned char responseBuf[5];
 
+    printf("Waiting for RX response...\n");
+    int responseBytes = read(fdd, responseBuf, 5);
+    
     if (responseBytes > 0) {
         unsigned char a = responseBuf[1];
         unsigned char c = responseBuf[2];
@@ -79,23 +82,26 @@ void send_supervision_frame(){
 
         if(bcc != check){
             printf(" A ^ C != BCC1\n");
-            printf("responseBytes %d\n", responseBytes);
+            printf("responseBytes %d: ", responseBytes);
 
             for (int i = 0; i < 5; i++) 
-                printf("0x%02X \n", responseBuf[i]);
-            
+                printf("0x%02X ", responseBuf[i]);
+            printf("\n");
+
         } else {
             if(general_state == SET_UA){
-                printf("UA received!\n");
-                printf("responseBytes %d\n", responseBytes);
+                printf("UA received! %d responseBytes: ", responseBytes);
 
                 for (int i = 0; i < 5; i++) 
-                    printf("0x%02X \n", responseBuf[i]);
-                
+                    printf("0x%02X ", responseBuf[i]);
+                printf("\n");
+
                 general_state = I_RR;
+    
+                printf("\n Successfully opened SET UA connection with llopen() \n\n");
+    
             }else if(general_state == DISC){
-                printf("DISC received!\n");
-                printf(":%s:%d\n", bufc, bytes);
+                printf("DISC received! (%d bytes) \n", responseBytes);
 
                 for (int i = 0; i < 5; i++) 
                     printf("0x%02X \n", responseBuf[i]);
@@ -117,7 +123,7 @@ void setOffAlarm(){
     alarmCount = 0;
 }
 
-void send_information(const unsigned char *selectedFrame, int frameSize){
+int send_information(const unsigned char *selectedFrame, int frameSize){
 
     // Create string to send
     bufc[0] = FLAG; 
@@ -155,29 +161,28 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
         bcc2 ^= selectedFrame[j];
     }
 
-// frame0 = {0x01,0x04,0x29};
-// frame1 = {0x02,0x04,0x29};
-
     bufc[pos] = bcc2;
     bufc[pos+1] = FLAG;
 
-    printf("buf to send: \n");
-    for (int i = 0; i < frameSize + 6; i++) 
-        printf("buf[%d]: 0x%02X \n", i, bufc[i]);
+    //int bytes = 
+    write(fdd, bufc, pos+2);
+    printf("llwrite wrote: \n");
 
-    int bytes = write(fdd, bufc, BUF_SIZE);
-    printf("%d bytes written during llwrite\n", bytes);
 
+    for (int i = 0; i < pos+2; i++) 
+        printf("[%d]: 0x%02X ", i, bufc[i]);
+    printf("\n");
+    
     if (alarmEnabled == FALSE) {
-        printf("Setting alarm, alarmCount = %d\n", alarmCount);
-        alarm(3); // Set alarm to be triggered in 3s
+        // printf("Setting alarm, alarmCount = %d\n", alarmCount);
+        alarm(3); // Set alarm to be triggered 
         alarmEnabled = TRUE;
     }
     
     // Wait until all bytes have been written to the serial port
-    unsigned char responseBuf[BUF_SIZE];
-    int responseBytes = read(fdd, responseBuf, BUF_SIZE);
-
+    unsigned char responseBuf[5];
+    int responseBytes = read(fdd, responseBuf, 5);
+    
     if (responseBytes > 0) {
         unsigned char a = responseBuf[1];
         unsigned char c = responseBuf[2];
@@ -186,16 +191,17 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
 
         if(bcc != check){
             printf(" A ^ C != BCC1\n");
-            printf(":%s:%d\n", responseBuf, bytes);
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X \n", responseBuf[i]);
             
         } else {
-            printf(" bcc==check! \n");
-            printf(":%s:%d\n", responseBuf, bytes);
+            // printf(" bcc==check! \n");
 
-            for (int i = 0; i < 5; i++) 
-                printf("0x%02X \n", responseBuf[i]);  
+            if (c!=0x00){
+                printf("We just read %d bytes: ", responseBytes);
+                for (int i = 0; i < 5; i++) 
+                     printf("[%d]: 0x%02X ", i, responseBuf[i]);
+                printf("\n");
+            } else
+                printf("empty C field... :(\n");
 
             switch (c) {
                 case 0x54:
@@ -206,7 +212,7 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
                 case 0xAA:
                     rr = 0;
                     setOffAlarm();
-                    printf("RR0\n");     
+                    // printf("RR0\n");     
                     break;
                 case 0x55:
                     rr = 1;
@@ -216,7 +222,7 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
                 case 0xAB:
                     rr = 1;
                     setOffAlarm();
-                    printf("RR1\n");      
+                    // printf("RR1\n");      
                     break;
                 default:
                     break;
@@ -224,19 +230,17 @@ void send_information(const unsigned char *selectedFrame, int frameSize){
 
             if (rr != i_value){  // If the received RR is different from the sent I,
                 i_value = !i_value;  // change the I value
-                printf("just changed i_value to %d\n", i_value);
-
+                changed_i = TRUE;
+                // printf("Switching i (%d)\n", i_value);
+                return 0;
             } 
-            // else    // If the received RR is the same as the sent I, we keep i_value
-            //     printf("Keeping i = %d, alarmCount = %d\n", i_value, alarmCount);
-
-            // by default, the next I is the same as the previous one
-            printf("next i = %d\n", i_value); 
-            
+            // else printf("kept i (%d)\n\n", i_value);    
         }
-    } else {
-        printf("No response received,  %d  alarmCount = %d \n", i_value, alarmCount);
-    }
+    } 
+    // else {
+    //     printf("No response received (i=%d)\n", i_value);
+    // }
+    return 1;
 }
 
 // Alarm function handler
@@ -247,15 +251,14 @@ void alarmHandler(int signal)
 
     printf("Alarm #%d\n", alarmCount);
 
-    printf("General state: %d\n", general_state);
+    // printf("General state: %d\n", general_state);
 
     switch (general_state){
         case SET_UA:
             send_supervision_frame();
             break;
         case I_RR:    
-            printf("Frame not received, retransmitting i = %d\n", i_value);
-            send_information(curr_buf,curr_buf_size);
+            send_information(curr_buf, curr_buf_size);
             break;
         case DISC:
             send_supervision_frame();
@@ -277,10 +280,8 @@ int llopen(LinkLayer connectionParameters)
 {
     fdd = openSerialPort(connectionParameters.serialPort,
                        connectionParameters.baudRate);
-    if (fdd < 0)
-    {
-        return -1;
-    }
+
+    if (fdd < 0) return -1;
 
     printf("New termios structure set\n");
 
@@ -295,7 +296,7 @@ int llopen(LinkLayer connectionParameters)
         bufc[3] = A ^ 0x03; // bcc1
         // buf[3]=0xFF;
         bufc[4] = FLAG; 
-        bufc[5] = '\n';
+        // bufc[5] = '\n';
 
         send_supervision_frame();
 
@@ -303,11 +304,10 @@ int llopen(LinkLayer connectionParameters)
         {
             if (!alarmEnabled)
             {
-                alarm(3); // Set alarm to be triggered in 3s
+                alarm(3); // Set alarm to be triggered 
                 alarmEnabled = TRUE;
             }
         }
-
 
         // TODO
 
@@ -321,8 +321,9 @@ int llopen(LinkLayer connectionParameters)
 
         while (STOP == FALSE && general_state == SET_UA)
         {
-            int bytes = read(fdd, bufc, 1);
-            bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+            //int bytes = 
+            read(fdd, bufc, 1);
+            // bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
             switch(state){
                 case START:
@@ -357,6 +358,7 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case BCC_OK:
+                    printf("bcc ok received\n");
                     if(bufc[0] == FLAG){
                         state = STOP_;
                     } else {
@@ -364,22 +366,22 @@ int llopen(LinkLayer connectionParameters)
                     }
                     break;
                 case STOP_:
-                    printf("SET acknowledged!\n");
-                    printf(":%s:%d\n", bufc, bytes);
 
-                
+                    printf("SET acknowledged!\n");
+            
 
                     bufc[0] = FLAG; 
                     bufc[1] = 0x01; // A
                     bufc[2] = 0x07; // C
                     bufc[3] = 0x01 ^ 0x07; // bcc1
                     bufc[4] = FLAG; 
-                    bufc[5] = '\n';
-                    int bytes = write(fdd, bufc, BUF_SIZE);
+                    // bufc[5] = '\n';
 
-                    printf("%d bytes written\n", bytes);
+                    int bytes = write(fdd, bufc, 5);
+                    printf("Sent UA, %d bytes written: ", bytes);
                     for (int i = 0; i < 5; i++)
                         printf("0x%02X ", bufc[i]);
+                    printf("\n");
 
                     STOP = TRUE;
                     general_state = I_RR;
@@ -401,16 +403,20 @@ int llwrite(const unsigned char *buf, int bufSize)
 {
     // Set alarm function handler
     (void)signal(SIGALRM, alarmHandler);
-    curr_buf_size = bufSize;
+    
     //copy value of buf and bufsize as a global variable so that alarm handler can use it
+    curr_buf_size = bufSize;
     for(int i=0; i < bufSize; i++){
         curr_buf[i] = buf[i];
     }
-
     
-    while (alarmCount < 3 && general_state == I_RR){
+    changed_i = FALSE;
+
+    // printf("general state: %d\n", general_state);
+    
+    while (alarmCount < 3 && general_state == I_RR && changed_i==FALSE){
         if (!alarmEnabled){
-            printf("Alarm disabled, writing frame %d\n", i_value);
+            // printf("Alarm disabled (i=%d)\n", i_value);            
             send_information(buf, bufSize);
         }
     }
@@ -420,9 +426,12 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     curr_buf_size = 0;
 
-    //send bytes written is success and -1 if failure
-    printf("Exausted all attempts\n");
-
+    if (alarmCount>=3){
+        printf("Exausted all attempts\n");
+        return -1; 
+    } 
+    
+    // printf("llwrite finished\n");
     return 0;
 }
 
@@ -441,25 +450,24 @@ int llread(unsigned char *packet)
     unsigned char aux_buf[BUF_SIZE + 1] = {0};
     int count = 0;
 
-    while ((STOP == FALSE) && (general_state == I_RR))
-    {
-        // Returns after 5 chars have been input
+    while ((STOP == FALSE) && (general_state == I_RR)) {
         int bytes = read(fdd, bufc, 1);
         bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
         switch(state_ack){
             case START_ack:
                 if(bufc[0] == FLAG){
                     state_ack = FLAG_RCV_ack;
                 }
                 //printf("start");
-            break;
+                break;
             case FLAG_RCV_ack:
                 if(bufc[0] == A){
                     state_ack  = A_RCV_ack;
-                    printf("flag to a\n");
+                    // printf("flag to a\n");
                 } else if (bufc[0] != FLAG) {
                     state_ack  = START_ack;
-                    printf("flag to start\n");
+                    // printf("flag to start\n");
                 }
                 break;
 
@@ -467,25 +475,24 @@ int llread(unsigned char *packet)
                 if((bufc[0] == 0x00) || (bufc[0] == 0x80)){
                     state_ack = C_RCV_ack;
                     i_signal = bufc[0];
-                    printf("A_RCV_ack to C_RCV_ack, i_signal = %x\n", i_signal);
                 } else if (bufc[0] == FLAG) {
                     state_ack = FLAG_RCV_ack;
-                    printf("a to flag t\n");
+                    // printf("a to flag t\n");
                 } else {
                     state_ack = START_ack;
-                    printf("a to start\n");
+                    // printf("a to start\n");
                 }
                 break;
             case C_RCV:
                 if(bufc[0] == (A ^ i_signal)){
                     state_ack  = BCC1_OK_ack;
-                    printf("c to bcc1\n");
+                    // printf("c to bcc1\n");
                 } else if (bufc[0] == FLAG) {
                     state_ack  = FLAG_RCV_ack;
-                    printf("c to flag\n");
+                    // printf("c to flag\n");
                 } else {
                     state_ack = START_ack;
-                    printf("c to to start\n");
+                    // printf("c to to start\n");
                 }
                 break;
             case BCC1_OK_ack:
@@ -493,20 +500,17 @@ int llread(unsigned char *packet)
                     bcc2_value ^= counter;
                     if(bcc2_value == counter){
                         state_ack = STOP_ack;
-                        printf("bcc1 to stop\n");
-                        if(i_signal == 0x00){
-                            rr_signal = 0xAB;
-                        } else if(i_signal == 0x80){
-                            rr_signal = 0xAA;
-                        }
+
+                        if (i_signal == 0x00) rr_signal = 0xAB;
+                        else if (i_signal == 0x80) rr_signal = 0xAA;
+
+                        // printf("RIGHT BCC2 0X%02X, i_signal 0x%02X, so rr= 0x%02X\n", bcc2_value, i_signal, rr_signal);
                     } else{
                         state_ack = STOP_ack;
-                        printf("bcc1 to stop\n");
-                        if(i_signal == 0x00){
-                            rr_signal = 0x54;
-                        } else if(i_signal == 0x80){
-                            rr_signal = 0x55;
-                        }
+                        if (i_signal == 0x00) rr_signal = 0x54;
+                        else if (i_signal == 0x80) rr_signal = 0x55;
+
+                        printf("WRONG BCC2, i_signal 0x%02X, so rr= 0x%02X\n", i_signal, rr_signal);
                     }
                 } else {
                     if(!is_esc){
@@ -515,50 +519,52 @@ int llread(unsigned char *packet)
                         }else{
                             counter = bufc[0];
                             bcc2_value ^= bufc[0];
-                            aux_buf[count] = bcc2_value;
+                            aux_buf[count] = bufc[0];
+                            // printf("auxbuf[%d] = 0x%02X\n", count, aux_buf[count]);
                             count++;
                         }
                     }
                     else {
                         is_esc = FALSE;
                         if (bufc[0] == 0x5e){
-                            bcc2_value ^= 0x7e;
-                            aux_buf[count] = bcc2_value;
+                            bcc2_value ^= FLAG;
+                            aux_buf[count] = FLAG;
+                            // printf(" FLAG auxbuf[%d] = 0x%02X\n", count, aux_buf[count]);
                             count++;
 
                         } else if(bufc[0] == 0x5d){
-                            bcc2_value ^= 0x7d;
-                            aux_buf[count] = bcc2_value;
+                            bcc2_value ^= ESC;
+                            aux_buf[count] = ESC;
+                            // printf("ESC auxbuf[%d] = 0x%02X\n", count, aux_buf[count]);
                             count++;
+
                         }
                     }
                 }
                 break;
             case STOP_ack:
-                printf("FRAME acknowledged!\n");
-            
+                // printf("FRAME acknowledged!\n");
 
                 bufc[0] = FLAG; 
                 bufc[1] = 0x01; // A
                 bufc[2] = rr_signal; // C
                 bufc[3] = 0x01 ^ rr_signal; // bcc1
                 bufc[4] = FLAG; 
-                bufc[5] = '\n';
-                for (int i = 0; i < 1; i++)
-                    printf("0x%02X ", bufc[i]);
-                int bytes = write(fdd, bufc, BUF_SIZE);
-                printf("%d bytes written\n", bytes);
-                printf("stop\n");
+                // bufc[5] = '\n'; // nao sei bem pra que serviria isso
+ 
+                //int bytes = 
+                write(fdd, bufc, 5);
+                
                 STOP = TRUE;
                 break;
         }
     }
 
-    for(int i = 0; i < count;i++){
+    for(int i = 0; i < count-1;i++){
         packet[i] = aux_buf[i];
     }
 
-    return (count-1)/8;
+    return count-1;
 }
 
 ////////////////////////////////////////////////
@@ -577,7 +583,7 @@ int llclose(int showStatistics)
         bufc[3] = A ^ 0x0B; // bcc1
         // buf[3]=0xFF;
         bufc[4] = FLAG; 
-        bufc[5] = '\n';
+        // bufc[5] = '\n';
 
         send_supervision_frame();
         general_state = DISC;
@@ -586,7 +592,7 @@ int llclose(int showStatistics)
         {
             if (!alarmEnabled)
             {
-                alarm(3); // Set alarm to be triggered in 3s
+                alarm(3); // Set alarm to be triggered 
                 alarmEnabled = TRUE;
             }
         }
@@ -597,137 +603,138 @@ int llclose(int showStatistics)
         bufc[3] = A ^ 0x07; // bcc1
         // buf[3]=0xFF;
         bufc[4] = FLAG; 
-        bufc[5] = '\n';
+        // bufc[5] = '\n';
 
         send_supervision_frame();
 
     } else if(curr_role == LlRx){
         general_state = DISC;
+        state = START;
+        STOP = TRUE;
         while (STOP == FALSE && general_state == DISC){
-        // Returns after 5 chars have been input
-        int bytes = read(fdd, bufc, 1);
-        bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+            int bytes = read(fdd, bufc, 1);
+            // bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
-        switch(state){
-            case START:
-                if(bufc[0] == FLAG){
-                    state = FLAG_RCV;
-                }
-            break;
-            case FLAG_RCV:
-                if(bufc[0] == A){
-                    state = A_RCV;
-                } else if (bufc[0] != FLAG) {
-                    state = START;
-                }
+            switch(state){
+                case START:
+                    if(bufc[0] == FLAG){
+                        state = FLAG_RCV;
+                    }
                 break;
+                case FLAG_RCV:
+                    if(bufc[0] == A){
+                        state = A_RCV;
+                    } else if (bufc[0] != FLAG) {
+                        state = START;
+                    }
+                    break;
 
-            case A_RCV:
-                if(bufc[0] == C){
-                    state = C_RCV;
-                } else if (bufc[0] == FLAG) {
-                    state = FLAG_RCV;
-                } else {
-                    state = START;
-                }
-                break;
-            case C_RCV:
-                if(bufc[0] == (A ^ 0x0B)){
-                    state = BCC_OK;
-                } else if (bufc[0] == FLAG) {
-                    state = FLAG_RCV;
-                } else {
-                    state = START;
-                }
-                break;
-            case BCC_OK:
-                if(bufc[0] == FLAG){
-                    state = STOP_;
-                } else {
-                    state = START;
-                }
-                break;
-            case STOP_:
-                printf("DISC acknowledged!\n");
-                printf(":%s:%d\n", bufc, bytes);
+                case A_RCV:
+                    if(bufc[0] == C){
+                        state = C_RCV;
+                    } else if (bufc[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case C_RCV:
+                    if(bufc[0] == (A ^ 0x0B)){
+                        state = BCC_OK;
+                    } else if (bufc[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case BCC_OK:
+                    if(bufc[0] == FLAG){
+                        state = STOP_;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case STOP_:
+                    printf("DISC acknowledged! ");
+                    printf("%d\n", bytes);
 
-                for (int i = 0; i < 5; i++)
-                    printf("0x%02X ", bufc[i]);
+                    for (int i = 0; i < 5; i++)
+                        printf("0x%02X ", bufc[i]);
 
-                bufc[0] = FLAG; 
-                bufc[1] = 0x01; // A
-                bufc[2] = 0x0B; // C
-                bufc[3] = 0x01 ^ 0x0B; // bcc1
-                bufc[4] = FLAG; 
-                bufc[5] = '\n';
-                int bytes = write(fdd, bufc, BUF_SIZE);
-                printf("%d bytes written\n", bytes);
+                    bufc[0] = FLAG; 
+                    bufc[1] = 0x01; // A
+                    bufc[2] = 0x0B; // C
+                    bufc[3] = 0x01 ^ 0x0B; // bcc1
+                    bufc[4] = FLAG; 
+                    // bufc[5] = '\n';
+                    //int bytes = 
+                    write(fdd, bufc, 5);
 
-                STOP = TRUE;
-                general_state = END;
-                break;
+                    STOP = TRUE;
+                    general_state = END;
+                    break;
+            }
         }
-    }
 
-    STOP = TRUE;
-    state = START;
+        STOP = TRUE;
+        state = START;
 
-    while (STOP == FALSE && general_state == END){
-        // Returns after 5 chars have been input
-        int bytes = read(fdd, bufc, 1);
-        bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+        while (STOP == FALSE && general_state == END){
+            // Returns after 5 chars have been input
+            int bytes = read(fdd, bufc, 1);
+            // bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
 
-        switch(state){
-            case START:
-                if(bufc[0] == FLAG){
-                    state = FLAG_RCV;
-                }
-            break;
-            case FLAG_RCV:
-                if(bufc[0] == A){
-                    state = A_RCV;
-                } else if (bufc[0] != FLAG) {
-                    state = START;
-                }
+            switch(state){
+                case START:
+                    if(bufc[0] == FLAG){
+                        state = FLAG_RCV;
+                    }
                 break;
+                case FLAG_RCV:
+                    if(bufc[0] == A){
+                        state = A_RCV;
+                    } else if (bufc[0] != FLAG) {
+                        state = START;
+                    }
+                    break;
 
-            case A_RCV:
-                if(bufc[0] == C){
-                    state = C_RCV;
-                } else if (bufc[0] == FLAG) {
-                    state = FLAG_RCV;
-                } else {
-                    state = START;
-                }
-                break;
-            case C_RCV:
-                if(bufc[0] == (A ^ 0x07)){
-                    state = BCC_OK;
-                } else if (bufc[0] == FLAG) {
-                    state = FLAG_RCV;
-                } else {
-                    state = START;
-                }
-                break;
-            case BCC_OK:
-                if(bufc[0] == FLAG){
-                    state = STOP_;
-                } else {
-                    state = START;
-                }
-                break;
-            case STOP_:
-                printf("UA acknowledged!\n");
-                printf(":%s:%d\n", bufc, bytes);
+                case A_RCV:
+                    if(bufc[0] == C){
+                        state = C_RCV;
+                    } else if (bufc[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case C_RCV:
+                    if(bufc[0] == (A ^ 0x07)){
+                        state = BCC_OK;
+                    } else if (bufc[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case BCC_OK:
+                    if(bufc[0] == FLAG){
+                        state = STOP_;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case STOP_:
+                    printf("final UA acknowledged! ");
+                    printf("%d\n", bytes);
 
-                for (int i = 0; i < 5; i++)
-                    printf("0x%02X ", bufc[i]);
+                    for (int i = 0; i < 5; i++)
+                        printf("0x%02X ", bufc[i]);
 
-                STOP = TRUE;
-                break;
+                    STOP = TRUE;
+                    break;
+            }
         }
-    }
-}
+        }
     int clstat = closeSerialPort();
     return clstat;
 }
