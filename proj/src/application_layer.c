@@ -6,8 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define MAX_FRAME_SIZE 100
-#define MAX_PACKET_SIZE 210
+#define MAX_FRAME_SIZE 1000
+#define MAX_PACKET_SIZE 1010
 
 unsigned char *readFile(const char *filename, size_t *fileSize) {
     FILE *file = fopen(filename, "rb"); // Open file in binary mode
@@ -141,19 +141,9 @@ void receivePackets(const char *filename) {
 
         if (bytesRead < 0) {
             printf("Error reading packet\n");
-            return;
+        
 
-        } 
-        //talvez nao precise deste elif
-        /*
-        else if (bytesRead == 0) {
-            printf("End of transmission\n");
-            receiving = FALSE;
-            break;
-        } 
-        */
-        else { 
-
+        } else { 
 
             if(packet[0] == 0x01){ // START CONTROL PACKET
 
@@ -184,29 +174,17 @@ void receivePackets(const char *filename) {
                         data[i] = packet[i + 4];
                     }
 
-
                     int dataLength = bytesRead - 4;
 
-
-                    if (fwrite(data, sizeof(unsigned char), dataLength, file) != dataLength)
-                    {
+                    if (fwrite(data, sizeof(unsigned char), dataLength, file) != dataLength){
                         printf("error in write data\n");
                     }
-                    printf("writing data\n");
+
+                    printf("Data #%d written to file. \n", sequenceNumber);
+                    
                     totalSize += frameSize ;
-                    /*
-
-                    if (fwrite(data, sizeof(unsigned char), frameSize, file) != frameSize) {
-                        printf(" ERROR: Could not correctly write data");
-                        return;
-                    } else {
-                        totalSize += frameSize ;
-                        printf("Data #%d written to file. \n", sequenceNumber);
-                    }
-                    */
-                } else if (sequenceNumber < expectedSequenceNumber){
-                    // printf("Calibrating... \n\n");
-
+                } else if (sequenceNumber != expectedSequenceNumber){
+                    printf("expected: %d, received: %d\n", expectedSequenceNumber, sequenceNumber);
                 }
 
             } else if (packet[0] == 0x03){ // END CONTROL PACKET

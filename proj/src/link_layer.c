@@ -20,7 +20,7 @@
 #define FALSE 0
 #define TRUE 1
 
-#define BUF_SIZE 256
+#define BUF_SIZE 1024
 #define FLAG 0x7E
 #define ESC 0x7D
 #define A 0x03
@@ -40,6 +40,8 @@ enum State_ACK {START_ack, FLAG_RCV_ack, A_RCV_ack, C_RCV_ack, BCC1_OK_ack, STOP
 enum State_ACK state_ack = START_ack;
 
 unsigned char rr = 0x00;
+unsigned char i_signal = 0x12;
+unsigned char rr_signal = 0x12;
 
 // renamed to i_value to avoid confusion with i for-loop variable
 unsigned char i_value = 0x00; 
@@ -166,12 +168,12 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
 
     //int bytes = 
     write(fdd, bufc, pos+2);
-    printf("llwrite wrote: \n");
 
+    // printf("llwrite wrote: \n");
 
-    for (int i = 0; i < pos+2; i++) 
-        printf("[%d]: 0x%02X ", i, bufc[i]);
-    printf("\n");
+    // for (int i = 0; i < pos+2; i++) 
+    //     printf("[%d]: 0x%02X ", i, bufc[i]);
+    // printf("\n");
     
     if (alarmEnabled == FALSE) {
         // printf("Setting alarm, alarmCount = %d\n", alarmCount);
@@ -309,11 +311,8 @@ int llopen(LinkLayer connectionParameters)
             }
         }
 
-        // TODO
-
         if(general_state == SET_UA) return -1;
-        else
-            return fdd;
+        else return fdd;
     }
 
     if(connectionParameters.role == LlRx){
@@ -443,8 +442,6 @@ int llread(unsigned char *packet)
     STOP = FALSE;
     unsigned char bcc2_value = 0x00;
     unsigned char is_esc = FALSE;
-    unsigned char i_signal = 0x12;
-    unsigned char rr_signal = 0x12;
     unsigned char counter = ESC;
     state_ack = START_ack;
     unsigned char aux_buf[BUF_SIZE + 1] = {0};
@@ -474,6 +471,11 @@ int llread(unsigned char *packet)
             case A_RCV_ack:
                 if((bufc[0] == 0x00) || (bufc[0] == 0x80)){
                     state_ack = C_RCV_ack;
+
+                    // if(i_signal == bufc[0]){
+                        
+                    //     return -1;
+                    // }
                     i_signal = bufc[0];
                 } else if (bufc[0] == FLAG) {
                     state_ack = FLAG_RCV_ack;
