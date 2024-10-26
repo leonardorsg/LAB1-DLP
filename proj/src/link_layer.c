@@ -74,8 +74,80 @@ void send_supervision_frame(){
     unsigned char responseBuf[5];
 
     printf("Waiting for RX response...\n");
-    int responseBytes = read(fdd, responseBuf, 5);
-    
+    STOP = FALSE;
+    unsigned char c = 0x00;
+    while (STOP == FALSE)
+        {
+            //int bytes = 
+            int responseBytes = read(fdd, responseBuf, 1);
+            // bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
+            switch(state){
+                case START:
+                    if(responseBuf[0] == FLAG){
+                        state = FLAG_RCV;
+                    }
+                break;
+                case FLAG_RCV:
+                    if(responseBuf[0] == 0x01){
+                        state = A_RCV;
+                    } else if (responseBuf[0] != FLAG) {
+                        state = START;
+                    }
+                    break;
+
+                case A_RCV:
+                    if((responseBuf[0] == 0x07) || (responseBuf[0] == 0x0B)){
+                        state = C_RCV;
+                        c = responseBuf[0];
+                    } else if (responseBuf[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case C_RCV:
+                    if(responseBuf[0] == (0x01 ^ c)){
+                        state = BCC_OK;
+                    } else if (responseBuf[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case BCC_OK:
+                    printf("bcc ok received\n");
+                    if(responseBuf[0] == FLAG){
+                        state = STOP_;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case STOP_:
+
+                    if(general_state == SET_UA){
+                        printf("UA received! %d responseBytes: ", responseBytes);
+
+                        general_state = I_RR;
+        
+                        printf("\n Successfully opened SET UA connection with llopen() \n\n");
+        
+                    }else if(general_state == DISC){
+                        printf("DISC received! (%d bytes) \n", responseBytes);
+
+                    
+                    
+                        general_state = END;
+                    }
+                    alarmCount = 0; // Reset alarm count
+                    alarm(0);
+            
+
+                    STOP = TRUE;
+                    break;
+            }
+        }
+/*
     if (responseBytes > 0) {
         unsigned char a = responseBuf[1];
         unsigned char c = responseBuf[2];
@@ -116,7 +188,7 @@ void send_supervision_frame(){
     } else {
         printf("No response received.\n");
     }
-
+*/
 }
 
 void setOffAlarm(){
@@ -177,12 +249,102 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     
     if (alarmEnabled == FALSE) {
         // printf("Setting alarm, alarmCount = %d\n", alarmCount);
-        alarm(3); // Set alarm to be triggered 
+        alarm(TIMEOUT); // Set alarm to be triggered 
         alarmEnabled = TRUE;
     }
     
     // Wait until all bytes have been written to the serial port
     unsigned char responseBuf[5];
+    state = START;
+    STOP = FALSE;
+    unsigned char c = 0x00;
+    while (STOP == FALSE)
+        {
+            //int bytes = 
+            read(fdd, responseBuf, 1);
+            // bufc[bytes] = '\0'; // Set end of string to '\0', so we can printf
+
+            switch(state){
+                case START:
+                    if(responseBuf[0] == FLAG){
+                        state = FLAG_RCV;
+                    }
+                break;
+                case FLAG_RCV:
+                    if(responseBuf[0] == 0x01){
+                        state = A_RCV;
+                    } else if (responseBuf[0] != FLAG) {
+                        state = START;
+                    }
+                    break;
+
+                case A_RCV:
+                    if((responseBuf[0] == 0xAA) || (responseBuf[0] == 0xAB) || (responseBuf[0] == 0x54) || (responseBuf[0] == 0x55)){
+                        state = C_RCV;
+                        c = responseBuf[0];
+                    } else if (responseBuf[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case C_RCV:
+                    if(responseBuf[0] == (0x01 ^ c)){
+                        state = BCC_OK;
+                    } else if (responseBuf[0] == FLAG) {
+                        state = FLAG_RCV;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case BCC_OK:
+                    printf("bcc ok received\n");
+                    if(responseBuf[0] == FLAG){
+                        state = STOP_;
+                    } else {
+                        state = START;
+                    }
+                    break;
+                case STOP_:
+
+                    STOP = TRUE;
+                    break;
+            }
+        }
+
+
+    switch (c) {
+        case 0x54:
+            rr = 0;
+            setOffAlarm();
+            printf("REJ0\n");
+            break;
+        case 0xAA:
+            rr = 0;
+            setOffAlarm();
+            //printf("RR0\n");       
+            break;
+        case 0x55:
+            rr = 1;
+            setOffAlarm();
+            printf("REJ1\n"); 
+            break;
+        case 0xAB:
+            rr = 1;
+            setOffAlarm();
+            // printf("RR1\n");      
+            break;
+        default:
+            break;
+    }
+
+    if (rr != i_value){  // If the received RR is different from the sent I,
+        i_value = !i_value;  // change the I value
+        changed_i = TRUE;
+        // printf("Switching i (%d)\n", i_value);
+        return 0;
+    } 
+    /*    
     int responseBytes = read(fdd, responseBuf, 5);
     
     if (responseBytes > 0) {
@@ -239,6 +401,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
             // else printf("kept i (%d)\n\n", i_value);    
         }
     } 
+    */
     // else {
     //     printf("No response received (i=%d)\n", i_value);
     // }
@@ -302,11 +465,11 @@ int llopen(LinkLayer connectionParameters)
 
         send_supervision_frame();
 
-        while (alarmCount < 3 && general_state==SET_UA)
+        while (alarmCount < N_TRIES && general_state==SET_UA)
         {
             if (!alarmEnabled)
             {
-                alarm(3); // Set alarm to be triggered 
+                alarm(TIMEOUT); // Set alarm to be triggered 
                 alarmEnabled = TRUE;
             }
         }
@@ -413,7 +576,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     // printf("general state: %d\n", general_state);
     
-    while (alarmCount < 3 && general_state == I_RR && changed_i==FALSE){
+    while (alarmCount < N_TRIES && general_state == I_RR && changed_i==FALSE){
         if (!alarmEnabled){
             // printf("Alarm disabled (i=%d)\n", i_value);            
             send_information(buf, bufSize);
@@ -425,7 +588,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     curr_buf_size = 0;
 
-    if (alarmCount>=3){
+    if (alarmCount>=N_TRIES){
         printf("Exausted all attempts\n");
         return -1; 
     } 
@@ -590,11 +753,11 @@ int llclose(int showStatistics)
         send_supervision_frame();
         general_state = DISC;
 
-        while (alarmCount < 3 && general_state==DISC)
+        while (alarmCount < N_TRIES && general_state==DISC)
         {
             if (!alarmEnabled)
             {
-                alarm(3); // Set alarm to be triggered 
+                alarm(TIMEOUT); // Set alarm to be triggered 
                 alarmEnabled = TRUE;
             }
         }

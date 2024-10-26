@@ -185,6 +185,7 @@ void receivePackets(const char *filename) {
                     totalSize += frameSize ;
                 } else if (sequenceNumber != expectedSequenceNumber){
                     printf("expected: %d, received: %d\n", expectedSequenceNumber, sequenceNumber);
+                    return;
                 }
 
             } else if (packet[0] == 0x03){ // END CONTROL PACKET

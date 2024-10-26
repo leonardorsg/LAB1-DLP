@@ -27,6 +27,9 @@ typedef struct
 #define FALSE 0
 #define TRUE 1
 
+#define N_TRIES 3
+#define TIMEOUT 4
+
 // Open a connection using the "port" parameters defined in struct linkLayer.
 // Return "1" on success or "-1" on error.
 int llopen(LinkLayer connectionParameters);
