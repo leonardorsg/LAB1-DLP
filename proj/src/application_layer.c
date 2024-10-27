@@ -142,8 +142,6 @@ void receivePackets(const char *filename) {
 
         if (bytesRead < 0) {
             printf("Error reading packet\n");
-        
-
         } else { 
 
             if(packet[0] == 0x01){ // START CONTROL PACKET

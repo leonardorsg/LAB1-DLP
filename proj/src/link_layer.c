@@ -27,7 +27,7 @@ enum State_ACK {START_ack, FLAG_RCV_ack, A_RCV_ack, C_RCV_ack, BCC1_OK_ack, STOP
 enum State_ACK state_ack = START_ack;
 
 unsigned char rr = 0x00;
-unsigned char i_signal = 0x12;
+unsigned char i_signal = 0x00;
 unsigned char rr_signal = 0x12;
 
 // renamed to i_value to avoid confusion with i for-loop variable
@@ -39,15 +39,16 @@ int alarmCount = 0;
 enum GeneralState {SET_UA, I_RR, DISC, END};
 enum GeneralState general_state = SET_UA;
 
-
 LinkLayerRole curr_role;
 
 int changed_i = FALSE;
+int changed_i_rcv = FALSE;
 
 int n_tries;
 int timeout;
 
 void setOffAlarm(){
+    printf("Disabling alarm\n\n");
     alarm(0); // Disable alarm
     alarmEnabled = FALSE;
     alarmCount = 0;
@@ -56,7 +57,7 @@ void setOffAlarm(){
 void setAlarm(){
     alarm(timeout);
     alarmEnabled = TRUE;    
-    printf("Alarm was set! alarmCount: %d\n", alarmCount);
+    printf("Alarm was set to %d! alarmCount: %d\n", timeout, alarmCount);
 }
 
 void send_supervision_frame(){
@@ -64,7 +65,8 @@ void send_supervision_frame(){
     write(fdd, bufc, 5);
     printf("Supervision frame was written.\n");
     
-    //setAlarm();
+    if (alarmEnabled == FALSE)
+        setAlarm();
 
     if(general_state == END) return;
     
@@ -76,7 +78,7 @@ void send_supervision_frame(){
     
     printf("Waiting for RX response...\n");
     
-    while (STOP == FALSE ){ 
+    while (STOP == FALSE && alarmEnabled){ 
 
         if(read(fdd, responseBuf, 1)>0){
             switch(state){
@@ -188,6 +190,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     write(fdd, bufc, pos+2);
     
     if (alarmEnabled == FALSE) {
+        printf("Setting alarm in send_info\n");
         setAlarm();
     }
     
@@ -195,8 +198,8 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     state = START;
     STOP = FALSE;
     unsigned char c = 0x00;
-    while (STOP == FALSE){
-        if(read(fdd, responseBuf, 1)<0){
+    while (STOP == FALSE && alarmEnabled){
+        read(fdd, responseBuf, 1);
 
             switch(state){
                 case START:
@@ -234,14 +237,18 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
                 case BCC_OK:
                     if(responseBuf[0] == FLAG){
                         STOP = TRUE;
+
                     } else {
                         state = START;
                     }
                     break;
             }
+            /*
         } else {
+            printf("No response received, state %d\n", state);
             STOP = TRUE;
         }
+        */
     }
 
 
@@ -270,6 +277,8 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
             break;
     }
 
+    printf(" will return from send_information. alarmenabled? %d\n", alarmEnabled);
+
     if (rr != i_value){  // If the received RR is different from the sent I,
         i_value = !i_value;  // change the I value
         changed_i = TRUE;
@@ -282,6 +291,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
 void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
+    alarm(0);
     alarmCount++;
 
     printf("Alarm #%d\n", alarmCount);
@@ -291,7 +301,12 @@ void alarmHandler(int signal)
             send_supervision_frame();
             break;
         case I_RR:    
-            send_information(curr_buf, curr_buf_size);
+            if (send_information(curr_buf, curr_buf_size)<0){
+                printf("ALARMHANDLER We received a response about a i_value different from the one we sent\n");
+            } else {
+                printf("ALARMHANDLER We received a response about a i_value equal to the one we sent\n");
+            }
+            // send_information(curr_buf, curr_buf_size);
             break;
         case DISC:
             send_supervision_frame();
@@ -431,7 +446,12 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     while (alarmCount < n_tries && general_state == I_RR && changed_i==FALSE){
         if (!alarmEnabled){
-            send_information(buf, bufSize);
+            printf("Calling send_info in llwrite\n");
+            if (send_information(buf, bufSize)<0){
+                printf("LLWRITE We received a response about a i_value different from the one we sent\n");
+            } else {
+                printf("LLWRITE We received a response about a i_value equal to the one we sent\n");
+            }
         }
     }
 
@@ -451,8 +471,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
-{
+int llread(unsigned char *packet) {
     STOP = FALSE;
     unsigned char bcc2_value = 0x00;
     unsigned char is_esc = FALSE;
@@ -482,7 +501,11 @@ int llread(unsigned char *packet)
             case A_RCV_ack:
                 if((bufc[0] == 0x00) || (bufc[0] == 0x80)){
                     state_ack = C_RCV_ack;
+                    if(i_signal == bufc[0]){
+                        changed_i_rcv = FALSE;
+                    } else changed_i_rcv = TRUE;
                     i_signal = bufc[0];
+                    
                 } else if (bufc[0] == FLAG) {
                     state_ack = FLAG_RCV_ack;
                 } else {
@@ -550,17 +573,19 @@ int llread(unsigned char *packet)
                 bufc[4] = FLAG; 
  
                 write(fdd, bufc, 5);
-                
                 STOP = TRUE;
                 break;
         }
     }
 
-    for(int i = 0; i < count-1;i++){
-        packet[i] = aux_buf[i];
-    }
+    if(changed_i_rcv ){
+        for(int i = 0; i < count-1;i++){
+            packet[i] = aux_buf[i];
+        }
 
-    return count-1;
+        return count-1;
+    } else return -1;
+
 }
 
 ////////////////////////////////////////////////
