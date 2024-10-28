@@ -68,9 +68,12 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
 
     printf("\n ######### CONTROL PACKET ########### \n\n");
 
-    if (llwrite(controlPacket, controlPacketSize)<0) {
+    int bytesWritten = llwrite(controlPacket, controlPacketSize);
+    if (bytesWritten<0) {
         printf("Did not recognize a reply from the receiver about the Control Packet.\n Exiting sendPackets function...\n");
         return;
+    }else{
+        printf("%d bytes written!\n", bytesWritten);
     }
 
     printf("\n ######### %ld DATA PACKETS ########### \n\n", fileSize/MAX_FRAME_SIZE + 1);
@@ -99,7 +102,13 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
         }
 
         printf("Transmitting packet #%d.\n", sequence_number);
-        llwrite(packet, frameSize+4);
+        bytesWritten = llwrite(packet, frameSize+4);
+        if(bytesWritten<0){
+            printf("Did not recognize a reply from the receiver about the Data Packet.\n Exiting sendPackets function...\n");
+            return;
+        }else{
+        printf("%d bytes written!\n", bytesWritten);
+        }
 
         // Update the number of bytes sent
         bytesSent += frameSize;
@@ -110,7 +119,13 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
     //Send end control packet
     controlPacket[0] = 0x03;
     
-    llwrite(controlPacket, controlPacketSize);
+    bytesWritten = llwrite(controlPacket, controlPacketSize);
+    if(bytesWritten<0){
+        printf("Did not recognize a reply from the receiver about the Control Packet.\n Exiting sendPackets function...\n");
+        return;
+    }else{
+        printf("%d bytes written!\n", bytesWritten);
+    }
 
 }
 
@@ -174,7 +189,7 @@ void receivePackets(const char *filename) {
                         printf("error in write data\n");
                     }
 
-                    printf("Data #%d written to file. \n", sequenceNumber);
+                    printf("Data #%d written to file. %d bytes\n", sequenceNumber, bytesRead);
                     
                     totalSize += frameSize ;
                 } else if (sequenceNumber != expectedSequenceNumber){

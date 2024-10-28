@@ -12,6 +12,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
+#include <time.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -39,10 +40,16 @@ typedef enum {SET_UA_STATE, I_RR_STATE, DISC_STATE, END_STATE} GeneralState;
 // RX VARIABLES
 State rx_state = START;
 
+clock_t begin;
+clock_t end;
+
 unsigned char i_signal = 0x12;
 unsigned char rr_signal = 0x12;
 
 unsigned char c = 0x00;
+
+int llclose_retransmissions = 0;
+int llclose_frames = 0;
 
 // Used in llread()
 unsigned char bcc2_value;
@@ -58,6 +65,7 @@ State tx_state = START;
 unsigned char rr = 0x00;
 unsigned char i_value = 0x00; // renamed to i_value to avoid confusion with i for-loop variable
 int changed_i = FALSE;
+int changed_i_rcv = TRUE;
 
 int alarmEnabled = FALSE;
 int alarmCount = 0;
@@ -86,6 +94,7 @@ void setOffAlarm(){
 void alarmHandler(int signal) {
     alarmEnabled = FALSE;
     alarmCount++;
+    llclose_retransmissions++;
 
     printf("Alarm #%d\n", alarmCount);  
 }
@@ -153,7 +162,7 @@ void sendSupervisionFrame(){
     
     write(fdd, bufc, 5);
     printf("Sent supervision frame.\n");
-
+    llclose_frames++;
     if (!alarmEnabled) setAlarm();
 
     if(general_state == END_STATE) return; // pq ter isso aqui?
@@ -236,6 +245,7 @@ void receiveInformationAnswer(){
 
 int send_information(const unsigned char *selectedFrame, int frameSize){
 
+    c = 0x00;
     // Create string to send
     bufc[0] = FLAG; 
     bufc[1] = A; 
@@ -271,8 +281,8 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     bufc[pos] = bcc2;
     bufc[pos+1] = FLAG;
 
-    write(fdd, bufc, pos+2);
-    
+    int bytesWritten = write(fdd, bufc, pos+2);
+    llclose_frames++;
     if (alarmEnabled == FALSE) {
         setAlarm();
     }
@@ -309,7 +319,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
         changed_i = TRUE;
     } 
 
-    return 0;
+    return bytesWritten;
 }
 
 void processTXSupervisionByte(unsigned char TXSupervisionByte){
@@ -349,7 +359,6 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
             }
             break;
         case BCC_OK:
-            // printf("bcc ok received\n");
             if(TXSupervisionByte == FLAG){
                 rx_state = STOP_;
 
@@ -364,6 +373,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
                     bufc[4] = FLAG; 
                     
                     write(fdd, bufc, 5);
+                    llclose_frames++;
 
                 } else if (general_state == DISC_STATE){
                     printf("DISC received!\n");
@@ -376,6 +386,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
                     bufc[4] = FLAG; 
 
                     write(fdd, bufc, 5);
+                    llclose_frames++;
                 } else if (general_state == END_STATE){
                     printf("UA received!\n");
                 }
@@ -396,6 +407,8 @@ int llopen(LinkLayer connectionParameters){
                        connectionParameters.baudRate);
 
     if (fdd < 0) return -1;
+
+    begin = clock();
 
     printf("New termios structure set\n");
 
@@ -449,10 +462,11 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     
     changed_i = FALSE;
+    int bytesWritten = 0;
     
     while (alarmCount < N_TRIES && general_state == I_RR_STATE && changed_i==FALSE){
         if (!alarmEnabled){        
-            send_information(buf, bufSize);
+           bytesWritten = send_information(buf, bufSize);
         }
     }
 
@@ -466,7 +480,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         return -1; 
     } 
     
-    return 0;
+    return bytesWritten;
 }
 
 void processTXInformationByte(unsigned char TXInformationByte){
@@ -487,6 +501,8 @@ void processTXInformationByte(unsigned char TXInformationByte){
         case A_RCV:
             if((TXInformationByte == 0x00) || (TXInformationByte == 0x80)){
                 rx_state = C_RCV;
+                if(i_signal == TXInformationByte) changed_i_rcv = FALSE;
+                else changed_i_rcv = TRUE;
                 i_signal = TXInformationByte;
             } else if (TXInformationByte == FLAG) {
                 rx_state = FLAG_RCV;
@@ -581,13 +597,15 @@ int llread(unsigned char *packet){
         bufc[4] = FLAG; 
 
         write(fdd, bufc, 5);
+        llclose_frames++;
     }
+    if(changed_i_rcv){
+        for(int i = 0; i < count-1;i++){
+            packet[i] = aux_buf[i];
+        }
 
-    for(int i = 0; i < count-1;i++){
-        packet[i] = aux_buf[i];
-    }
-
-    return count-1;
+        return count-1;
+    } else return -1;
 }
 
 ////////////////////////////////////////////////
@@ -653,6 +671,24 @@ int llclose(int showStatistics) {
                 processTXSupervisionByte(bufc[0]);
             }
         }
+    }
+
+    end = clock();
+
+    if(showStatistics){
+        if(curr_role == LlTx){
+            printf("\n==================== Transmitter Statistics ====================\n");
+            printf("Total number of frames sent        : %d\n", llclose_frames);
+            printf("Total number of retransmissions    : %d\n", llclose_retransmissions);
+            
+        } else {
+            printf("\n==================== Receiver Statistics ====================\n");
+            printf("Total number of frames received        : %d\n", llclose_frames);
+            
+        }
+        double time = ((double)(end - begin)) / CLOCKS_PER_SEC;
+        printf("Total time                             : %.6f\n", time);
+        printf("=================================================================\n\n");
     }
     int clstat = closeSerialPort();
     return clstat;
