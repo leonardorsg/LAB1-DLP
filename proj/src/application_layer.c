@@ -101,7 +101,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
             packet[i+4] = fileData[bytesSent + i];
         }
 
-        printf("Transmitting packet #%d.\n", sequence_number);
+        printf("Transmitting packet #%d.", sequence_number);
         bytesWritten = llwrite(packet, frameSize+4);
         if(bytesWritten<0){
             printf("Did not recognize a reply from the receiver about the Data Packet.\n Exiting sendPackets function...\n");

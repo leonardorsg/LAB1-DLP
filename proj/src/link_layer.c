@@ -48,9 +48,6 @@ unsigned char rr_signal = 0x12;
 
 unsigned char c = 0x00;
 
-int llclose_retransmissions = 0;
-int llclose_frames = 0;
-
 // Used in llread()
 unsigned char bcc2_value;
 unsigned char is_esc;
@@ -70,18 +67,22 @@ int changed_i_rcv = TRUE;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
 
+int llclose_retransmissions = 0;
 
+int llclose_frames = 0;
 
 int fdd = -1;
 unsigned char bufc[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
 unsigned char curr_buf[BUF_SIZE + 1] = {0};
 int curr_buf_size = 0;
 
+LinkLayer connectionParams;
+
 LinkLayerRole curr_role;
 
 
 void setAlarm(){
-    alarm(TIMEOUT);
+    alarm(connectionParams.timeout);
     alarmEnabled = TRUE;
 }
 
@@ -389,6 +390,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
                     llclose_frames++;
                 } else if (general_state == END_STATE){
                     printf("UA received!\n");
+                    llclose_frames++;
                 }
             } else {
                 rx_state = START;
@@ -410,6 +412,8 @@ int llopen(LinkLayer connectionParameters){
 
     begin = clock();
 
+    connectionParams = connectionParameters;
+
     printf("New termios structure set\n");
 
     if(connectionParameters.role == LlTx){
@@ -423,7 +427,7 @@ int llopen(LinkLayer connectionParameters){
         bufc[3] = A ^ 0x03; // bcc1
         bufc[4] = FLAG; 
 
-        while (alarmCount < N_TRIES && general_state==SET_UA_STATE) {
+        while (alarmCount < connectionParams.nRetransmissions && general_state==SET_UA_STATE) {
             if (!alarmEnabled) {
                 sendSupervisionFrame();
                 receiveSupervisionAnswer();
@@ -464,7 +468,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     changed_i = FALSE;
     int bytesWritten = 0;
     
-    while (alarmCount < N_TRIES && general_state == I_RR_STATE && changed_i==FALSE){
+    while (alarmCount < connectionParams.nRetransmissions && general_state == I_RR_STATE && changed_i==FALSE){
         if (!alarmEnabled){        
            bytesWritten = send_information(buf, bufSize);
         }
@@ -475,7 +479,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     curr_buf_size = 0;
 
-    if (alarmCount>=N_TRIES){
+    if (alarmCount>=connectionParams.nRetransmissions){
         printf("Exausted all attempts\n");
         return -1; 
     } 
@@ -626,14 +630,14 @@ int llclose(int showStatistics) {
         printf("Sending DISC...\n");
         general_state = DISC_STATE;
 
-        while (alarmCount < N_TRIES && general_state==DISC_STATE){
+        while (alarmCount < connectionParams.nRetransmissions && general_state==DISC_STATE){
             if (!alarmEnabled){
                 sendSupervisionFrame();
                 receiveSupervisionAnswer();
             }
         }
 
-        if (alarmCount>=N_TRIES){
+        if (alarmCount>=connectionParams.nRetransmissions){
             printf("Exausted all attempts\n");
             return -1; 
         } 
@@ -678,14 +682,15 @@ int llclose(int showStatistics) {
     if(showStatistics){
         if(curr_role == LlTx){
             printf("\n==================== Transmitter Statistics ====================\n");
-            printf("Total number of frames sent        : %d\n", llclose_frames);
-            printf("Total number of retransmissions    : %d\n", llclose_retransmissions);
+            printf("Total number of frames sent            : %d\n", llclose_frames);
+            printf("Total number of retransmissions        : %d\n", llclose_retransmissions);
             
         } else {
             printf("\n==================== Receiver Statistics ====================\n");
             printf("Total number of frames received        : %d\n", llclose_frames);
             
         }
+        printf("Time Frame                             : %.6f\n", (double) BUF_SIZE / connectionParams.baudRate);
         double time = ((double)(end - begin)) / CLOCKS_PER_SEC;
         printf("Total time                             : %.6f\n", time);
         printf("=================================================================\n\n");
