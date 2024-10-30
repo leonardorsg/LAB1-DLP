@@ -40,8 +40,8 @@ typedef enum {SET_UA_STATE, I_RR_STATE, DISC_STATE, END_STATE} GeneralState;
 // RX VARIABLES
 State rx_state = START;
 
-clock_t begin;
-clock_t end;
+extern clock_t begin;
+extern clock_t end;
 
 unsigned char i_signal = 0x12;
 unsigned char rr_signal = 0x12;
@@ -95,11 +95,13 @@ void setOffAlarm(){
 void alarmHandler(int signal) {
     alarmEnabled = FALSE;
     alarmCount++;
+    //statistics variable
     llclose_retransmissions++;
 
     printf("Alarm #%d\n", alarmCount);  
 }
 
+//Function that implements state machine used to procress receptor supervision bytes
 void processRXSupervisionByte(unsigned char supervisionByte){
     switch(tx_state){
         case START:
@@ -184,6 +186,7 @@ void receiveSupervisionAnswer(){
     
 }
 
+//Function that implements state machine used to procress receptor information bytes
 void processRXInformationByte(unsigned char informationByte){
     switch(tx_state){
         case START:
@@ -294,6 +297,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
         case 0x54:
             rr = 0;
             setOffAlarm();
+            llclose_retransmissions++;
             printf("REJ0\n");
             break;
         case 0xAA:
@@ -304,6 +308,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
         case 0x55:
             rr = 1;
             setOffAlarm();
+            llclose_retransmissions++;
             printf("REJ1\n"); 
             break;
         case 0xAB:
@@ -323,6 +328,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     return bytesWritten;
 }
 
+//Function that implements state machine used to procress transmitor supervision bytes
 void processTXSupervisionByte(unsigned char TXSupervisionByte){
     switch(rx_state){
         case START:
@@ -410,7 +416,6 @@ int llopen(LinkLayer connectionParameters){
 
     if (fdd < 0) return -1;
 
-    begin = clock();
 
     connectionParams = connectionParameters;
 
@@ -434,6 +439,7 @@ int llopen(LinkLayer connectionParameters){
             }
         }
 
+        //If the transmitor tried to retransmits supervision frame N times and is still in SET_UA_STATE, returns -1
         if(general_state == SET_UA_STATE) return -1;
         else return fdd;
     }
@@ -677,7 +683,6 @@ int llclose(int showStatistics) {
         }
     }
 
-    end = clock();
 
     if(showStatistics){
         if(curr_role == LlTx){
