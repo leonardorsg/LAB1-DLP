@@ -12,7 +12,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
-#include <time.h>
+#include <sys/time.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
@@ -40,8 +40,8 @@ typedef enum {SET_UA_STATE, I_RR_STATE, DISC_STATE, END_STATE} GeneralState;
 // RX VARIABLES
 State rx_state = START;
 
-extern clock_t begin;
-extern clock_t end;
+struct timeval begin, end;
+
 
 unsigned char i_signal = 0x12;
 unsigned char rr_signal = 0x12;
@@ -416,6 +416,8 @@ int llopen(LinkLayer connectionParameters){
 
     if (fdd < 0) return -1;
 
+    gettimeofday(&begin, NULL);
+
 
     connectionParams = connectionParameters;
 
@@ -511,8 +513,8 @@ void processTXInformationByte(unsigned char TXInformationByte){
         case A_RCV:
             if((TXInformationByte == 0x00) || (TXInformationByte == 0x80)){
                 rx_state = C_RCV;
-                if(i_signal == TXInformationByte) changed_i_rcv = FALSE;
-                else changed_i_rcv = TRUE;
+                //if(i_signal == TXInformationByte) changed_i_rcv = FALSE;
+                //else changed_i_rcv = TRUE;
                 i_signal = TXInformationByte;
             } else if (TXInformationByte == FLAG) {
                 rx_state = FLAG_RCV;
@@ -609,7 +611,7 @@ int llread(unsigned char *packet){
         write(fdd, bufc, 5);
         llclose_frames++;
     }
-    if(changed_i_rcv){
+    if((rr_signal!=0x54) && (rr_signal!=0x55)){
         for(int i = 0; i < count-1;i++){
             packet[i] = aux_buf[i];
         }
@@ -685,6 +687,7 @@ int llclose(int showStatistics) {
 
 
     if(showStatistics){
+        gettimeofday(&end, NULL);
         if(curr_role == LlTx){
             printf("\n==================== Transmitter Statistics ====================\n");
             printf("Total number of frames sent            : %d\n", llclose_frames);
@@ -696,8 +699,8 @@ int llclose(int showStatistics) {
             
         }
         printf("Time Frame                             : %.6f\n", (double) BUF_SIZE / connectionParams.baudRate);
-        double time = ((double)(end - begin)) / CLOCKS_PER_SEC;
-        printf("Total time                             : %.6f\n", time);
+        long time = end.tv_sec - begin.tv_sec;
+        printf("Total time                             : %ld seconds\n", time);
         printf("=================================================================\n\n");
     }
     int clstat = closeSerialPort();

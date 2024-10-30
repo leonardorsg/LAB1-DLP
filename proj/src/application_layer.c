@@ -10,7 +10,7 @@
 #define MAX_FRAME_SIZE 1000
 #define MAX_PACKET_SIZE 1010
 
-clock_t end;
+size_t fileSizeAux;
 
 unsigned char *readFile(const char *filename, size_t *fileSize) {
     FILE *file = fopen(filename, "rb"); // Open file in binary mode
@@ -265,7 +265,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     printf( "\n\n ######### CLOSING CONNECTION ########### \n\n");
 
-    end = clock();
     if(llclose(1) < 0) printf("Error in close.\n");
     else printf("Successfully executed llclose().\n");
 

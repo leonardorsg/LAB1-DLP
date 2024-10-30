@@ -10,7 +10,6 @@
 
 #define N_TRIES 3
 #define TIMEOUT 4
-clock_t begin;
 
 
 // Arguments:
@@ -66,7 +65,6 @@ int main(int argc, char *argv[])
            N_TRIES,
            TIMEOUT,
            filename);
-    begin = clock();
     applicationLayer(serialPort, role, baudrate, N_TRIES, TIMEOUT, filename);
 
     return 0;
