@@ -12,6 +12,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
+#include <unistd.h>
 #include <sys/time.h>
 
 // Baudrate settings are defined in <asm/termbits.h>, which is
@@ -434,7 +435,7 @@ int llopen(LinkLayer connectionParameters){
         bufc[3] = A ^ 0x03; // bcc1
         bufc[4] = FLAG; 
 
-        while (alarmCount < connectionParams.nRetransmissions && general_state==SET_UA_STATE) {
+        while (alarmCount <= connectionParams.nRetransmissions && general_state==SET_UA_STATE) {
             if (!alarmEnabled) {
                 sendSupervisionFrame();
                 receiveSupervisionAnswer();
@@ -476,7 +477,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     changed_i = FALSE;
     int bytesWritten = 0;
     
-    while (alarmCount < connectionParams.nRetransmissions && general_state == I_RR_STATE && changed_i==FALSE){
+    while (alarmCount <= connectionParams.nRetransmissions && general_state == I_RR_STATE && changed_i==FALSE){
         if (!alarmEnabled){        
            bytesWritten = send_information(buf, bufSize);
         }
@@ -487,7 +488,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     curr_buf_size = 0;
 
-    if (alarmCount>=connectionParams.nRetransmissions){
+    if (alarmCount>connectionParams.nRetransmissions){
         printf("Exausted all attempts\n");
         return -1; 
     } 
@@ -638,14 +639,14 @@ int llclose(int showStatistics) {
         printf("Sending DISC...\n");
         general_state = DISC_STATE;
 
-        while (alarmCount < connectionParams.nRetransmissions && general_state==DISC_STATE){
+        while (alarmCount <= connectionParams.nRetransmissions && general_state==DISC_STATE){
             if (!alarmEnabled){
                 sendSupervisionFrame();
                 receiveSupervisionAnswer();
             }
         }
 
-        if (alarmCount>=connectionParams.nRetransmissions){
+        if (alarmCount>connectionParams.nRetransmissions){
             printf("Exausted all attempts\n");
             return -1; 
         } 
@@ -659,9 +660,10 @@ int llclose(int showStatistics) {
         printf("Sending UA...\n");
         sendSupervisionFrame();
 
-    } else if(curr_role == LlRx){
+    } else {
         general_state = DISC_STATE;
         rx_state = START;
+        
 
         printf("Waiting for DISC...\n");
         
@@ -676,6 +678,7 @@ int llclose(int showStatistics) {
             return -1;
         }
 
+        general_state = END_STATE;
         printf("Waiting for UA...\n");
         rx_state = START;
         while (rx_state != STOP_){
@@ -703,6 +706,7 @@ int llclose(int showStatistics) {
         printf("Total time                             : %ld seconds\n", time);
         printf("=================================================================\n\n");
     }
+    sleep(3);
     int clstat = closeSerialPort();
     return clstat;
 }

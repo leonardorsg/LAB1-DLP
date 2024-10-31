@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 #define MAX_FRAME_SIZE 1000
 #define MAX_PACKET_SIZE 1010
@@ -261,6 +262,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         free(fileData);
     } else {
         receivePackets(filename);
+        sleep(3);
     }
 
     printf( "\n\n ######### CLOSING CONNECTION ########### \n\n");
