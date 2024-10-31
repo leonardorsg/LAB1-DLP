@@ -36,7 +36,7 @@
 volatile int STOP = FALSE;
 
 typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_} State;
-typedef enum {SET_UA_STATE, I_RR_STATE, DISC_STATE, END_STATE} GeneralState;
+typedef enum {SET_UA_STATE, I_RR_STATE, DISC_STATE, UA_STATE, END_STATE} GeneralState;
 
 // RX VARIABLES
 State rx_state = START;
@@ -156,7 +156,7 @@ void processRXSupervisionByte(unsigned char supervisionByte){
                     general_state = I_RR_STATE;
                 }else if(general_state == DISC_STATE){
                     printf("DISC received! \n\n");
-                    general_state = END_STATE;
+                    general_state = UA_STATE;
                 }
 
                 setOffAlarm();
@@ -176,7 +176,6 @@ void sendSupervisionFrame(){
     increment_llclose_frames();
     if (!alarmEnabled) setAlarm();
 
-    if(general_state == END_STATE) return; // pq ter isso aqui?
 }
 
 void receiveSupervisionAnswer(){
@@ -352,9 +351,21 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
             }
             break;
         case A_RCV:
-            if((general_state == SET_UA_STATE && TXSupervisionByte == SET) || 
+            // Probably the UA was lost, and the transmitter is sending a new SET
+            if (general_state == I_RR_STATE && TXSupervisionByte == SET){
+                printf("Receiving a late SET signal. \n");
+                general_state = SET_UA_STATE;
+                rx_state = C_RCV;
+            }
+            // Probably the receiver DISC ACK was lost, and the transmitter is sending a new DISC
+            else if (general_state == UA_STATE && TXSupervisionByte == DISC){
+                printf("Receiving a late DISC signal. \n");
+                general_state = DISC_STATE;
+                rx_state = C_RCV;
+            }
+            else if((general_state == SET_UA_STATE && TXSupervisionByte == SET) || 
                 (general_state == DISC_STATE && TXSupervisionByte == DISC) || 
-                (general_state == END_STATE && TXSupervisionByte == UA)){ 
+                (general_state == UA_STATE && TXSupervisionByte == UA)){ 
                 rx_state = C_RCV;
             } else if (TXSupervisionByte == FLAG) {
                 rx_state = FLAG_RCV;
@@ -365,7 +376,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
         case C_RCV:
             if((general_state == SET_UA_STATE && TXSupervisionByte== (A ^ SET)) || 
                 (general_state == DISC_STATE && TXSupervisionByte == (A ^ DISC)) || 
-                (general_state == END_STATE && TXSupervisionByte == (A ^ UA))){ 
+                (general_state == UA_STATE && TXSupervisionByte == (A ^ UA))){ 
                 rx_state = BCC_OK;
             } else if (TXSupervisionByte == FLAG) {
                 rx_state = FLAG_RCV;
@@ -392,7 +403,8 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
 
                 } else if (general_state == DISC_STATE){
                     printf("DISC received!\n");
-                    general_state = END_STATE;
+                    // Setting state to UA_STATE, waiting for UA
+                    general_state = UA_STATE;
 
                     bufc[0] = FLAG; 
                     bufc[1] = 0x01; // A
@@ -402,7 +414,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
 
                     write(fdd, bufc, 5);
                     increment_llclose_frames();;
-                } else if (general_state == END_STATE){
+                } else if (general_state == UA_STATE){
                     printf("UA received!\n");
                     increment_llclose_frames();;
                 }
@@ -457,7 +469,7 @@ int llopen(LinkLayer connectionParameters){
     if(connectionParameters.role == LlRx){
         curr_role = LlRx;
 
-        while (rx_state!=STOP_ ){
+        while (general_state != I_RR_STATE){
             if (read(fdd, bufc, 1)){
                 processTXSupervisionByte(bufc[0]);
             }
@@ -681,29 +693,23 @@ int llclose(int showStatistics) {
 
         printf("Sending UA...\n");
         sendSupervisionFrame();
-
+        general_state = END_STATE;
+        
     } else {
         general_state = DISC_STATE;
         rx_state = START;
         
-
         printf("Waiting for DISC...\n");
         
-        while (rx_state != STOP_){
+        while (general_state!=UA_STATE){
             if (read(fdd, bufc, 1)){
                 processTXSupervisionByte(bufc[0]);
             }     
         }
 
-        if (general_state == DISC_STATE){
-            printf("Did not receive DISC.\n");
-            return -1;
-        }
-
-        general_state = END_STATE;
         printf("Waiting for UA...\n");
         rx_state = START;
-        while (rx_state != STOP_){
+        while (general_state!=END_STATE){
             if (read(fdd, bufc, 1)){
                 processTXSupervisionByte(bufc[0]);
             }
