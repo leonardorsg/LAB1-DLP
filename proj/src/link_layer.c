@@ -77,6 +77,8 @@ unsigned char bufc[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' cha
 unsigned char curr_buf[BUF_SIZE + 1] = {0};
 int curr_buf_size = 0;
 
+int is_valid_packet = FALSE;
+
 LinkLayer connectionParams;
 
 LinkLayerRole curr_role;
@@ -100,6 +102,11 @@ void alarmHandler(int signal) {
     llclose_retransmissions++;
 
     printf("Alarm #%d\n", alarmCount);  
+}
+
+// Track the number of frames sent
+void increment_llclose_frames(){
+    llclose_frames++;
 }
 
 //Function that implements state machine used to procress receptor supervision bytes
@@ -166,7 +173,7 @@ void sendSupervisionFrame(){
     
     write(fdd, bufc, 5);
     printf("Sent supervision frame.\n");
-    llclose_frames++;
+    increment_llclose_frames();
     if (!alarmEnabled) setAlarm();
 
     if(general_state == END_STATE) return; // pq ter isso aqui?
@@ -287,7 +294,7 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     bufc[pos+1] = FLAG;
 
     int bytesWritten = write(fdd, bufc, pos+2);
-    llclose_frames++;
+    increment_llclose_frames();
     if (alarmEnabled == FALSE) {
         setAlarm();
     }
@@ -299,18 +306,18 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
             rr = 0;
             setOffAlarm();
             llclose_retransmissions++;
-            printf("REJ0\n");
+            printf("REJ0. ");
             break;
         case 0xAA:
             rr = 0;
             setOffAlarm();
-            //printf("RR0\n");       
+            // printf("RR0\n");       
             break;
         case 0x55:
             rr = 1;
             setOffAlarm();
             llclose_retransmissions++;
-            printf("REJ1\n"); 
+            printf("REJ1. "); 
             break;
         case 0xAB:
             rr = 1;
@@ -381,7 +388,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
                     bufc[4] = FLAG; 
                     
                     write(fdd, bufc, 5);
-                    llclose_frames++;
+                    increment_llclose_frames();;
 
                 } else if (general_state == DISC_STATE){
                     printf("DISC received!\n");
@@ -394,10 +401,10 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
                     bufc[4] = FLAG; 
 
                     write(fdd, bufc, 5);
-                    llclose_frames++;
+                    increment_llclose_frames();;
                 } else if (general_state == END_STATE){
                     printf("UA received!\n");
-                    llclose_frames++;
+                    increment_llclose_frames();;
                 }
             } else {
                 rx_state = START;
@@ -514,8 +521,10 @@ void processTXInformationByte(unsigned char TXInformationByte){
         case A_RCV:
             if((TXInformationByte == 0x00) || (TXInformationByte == 0x80)){
                 rx_state = C_RCV;
-                //if(i_signal == TXInformationByte) changed_i_rcv = FALSE;
-                //else changed_i_rcv = TRUE;
+
+                if (i_signal == TXInformationByte) changed_i_rcv = FALSE;
+                else changed_i_rcv = TRUE;
+
                 i_signal = TXInformationByte;
             } else if (TXInformationByte == FLAG) {
                 rx_state = FLAG_RCV;
@@ -538,6 +547,16 @@ void processTXInformationByte(unsigned char TXInformationByte){
                 if(bcc2_value == counter){
                     rx_state = STOP_;
 
+                    if (changed_i_rcv){
+                        is_valid_packet = TRUE;
+                    } else if ((rr_signal == 0x54) || (rr_signal == 0x55)){
+                        // if the previous rr_signal was REJ and the i kept the same, then we want to write it
+                        is_valid_packet = TRUE;
+                    } else { 
+                        // if the i did not change, and we accepted the previous one
+                        is_valid_packet = FALSE;
+                    }
+
                     if (i_signal == 0x00) rr_signal = 0xAB;
                     else if (i_signal == 0x80) rr_signal = 0xAA;
 
@@ -548,7 +567,9 @@ void processTXInformationByte(unsigned char TXInformationByte){
                     if (i_signal == 0x00) rr_signal = 0x54;
                     else if (i_signal == 0x80) rr_signal = 0x55;
 
-                    printf("WRONG BCC2, i_signal 0x%02X, so rr= 0x%02X\n", i_signal, rr_signal);
+                    is_valid_packet = FALSE;
+
+                    printf("WRONG BCC2 %0x02X, i_signal 0x%02X, so rr= 0x%02X\n", bcc2_value, i_signal, rr_signal);
                 }
             } else {
                 if(!is_esc){
@@ -610,15 +631,16 @@ int llread(unsigned char *packet){
         bufc[4] = FLAG; 
 
         write(fdd, bufc, 5);
-        llclose_frames++;
+        increment_llclose_frames();;
     }
-    if((rr_signal!=0x54) && (rr_signal!=0x55)){
+    if(is_valid_packet){
         for(int i = 0; i < count-1;i++){
             packet[i] = aux_buf[i];
         }
-
         return count-1;
-    } else return -1;
+    } else {
+        return -1;
+    }
 }
 
 ////////////////////////////////////////////////

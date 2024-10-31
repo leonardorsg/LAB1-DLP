@@ -71,7 +71,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
     int controlPacketSize = 3 + length;
 
     printf("\n ######### CONTROL PACKET ########### \n\n");
-
+    printf("Transmitting start control packet. \n");
     int bytesWritten = llwrite(controlPacket, controlPacketSize);
     if (bytesWritten<0) {
         printf("Did not recognize a reply from the receiver about the Control Packet.\n Exiting sendPackets function...\n");
@@ -123,6 +123,7 @@ void sendPackets(unsigned char *fileData, size_t fileSize) {
     //Send end control packet
     controlPacket[0] = 0x03;
     
+    printf("Transmitting end control packet \n");
     bytesWritten = llwrite(controlPacket, controlPacketSize);
     if(bytesWritten<0){
         printf("Did not recognize a reply from the receiver about the Control Packet.\n Exiting sendPackets function...\n");
