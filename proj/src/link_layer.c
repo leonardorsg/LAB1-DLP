@@ -351,14 +351,8 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
             }
             break;
         case A_RCV:
-            // Probably the UA was lost, and the transmitter is sending a new SET
-            if (general_state == I_RR_STATE && TXSupervisionByte == SET){
-                printf("Receiving a late SET signal. \n");
-                general_state = SET_UA_STATE;
-                rx_state = C_RCV;
-            }
             // Probably the receiver DISC ACK was lost, and the transmitter is sending a new DISC
-            else if (general_state == UA_STATE && TXSupervisionByte == DISC){
+            if (general_state == UA_STATE && TXSupervisionByte == DISC){
                 printf("Receiving a late DISC signal. \n");
                 general_state = DISC_STATE;
                 rx_state = C_RCV;
