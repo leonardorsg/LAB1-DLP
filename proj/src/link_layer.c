@@ -416,6 +416,7 @@ void processTXSupervisionByte(unsigned char TXSupervisionByte){
                     increment_llclose_frames();;
                 } else if (general_state == UA_STATE){
                     printf("UA received!\n");
+                    general_state = END_STATE;
                     increment_llclose_frames();;
                 }
             } else {
