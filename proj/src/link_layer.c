@@ -726,21 +726,17 @@ int llclose(int showStatistics) {
             printf("Total number of frames received        : %d\n", llclose_frames);
             
         }
-        double tframe = (double) BUF_SIZE / connectionParams.baudRate;
+        double tframe = (double) BUF_SIZE*8 / connectionParams.baudRate;
         printf("Time Frame                             : %.6f\n", tframe);
         
         long time = end.tv_sec - begin.tv_sec;
         printf("Total time                             : %ld seconds\n", time);
         
-        // double tprop = (double) distance / (0.000005/5000);
-        // double tprop = 0.005; // delay? 5 usec microsecond? 5us/km?
-        double tprop=0;
-        printf("Time prop                              : %.6f\n", tprop);
-
-        double alpha = (double) tprop / tframe;
-        printf("alpha                                  : %.6f\n", alpha);
-        
-        printf("Efficiency                             : %.6f\n", (double) (1 / (1 + 2 * alpha)));
+        // calculated baudrate = filesize (bits) / time (s)
+        double calculated_baudrate = (double) llclose_frames * 8 * BUF_SIZE / time;
+        printf("Calculated Baudrate                    : %d\n", calculated_baudrate);
+        printf("Nominal Baudrate                       : %d\n", connectionParams.baudRate);
+        printf("Efficency                             : %.6f\n", (double) (calculated_baudrate / connectionParams.baudRate));
         printf("=================================================================\n\n");
     }
     sleep(3);
