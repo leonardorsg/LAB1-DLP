@@ -718,15 +718,29 @@ int llclose(int showStatistics) {
             printf("\n==================== Transmitter Statistics ====================\n");
             printf("Total number of frames sent            : %d\n", llclose_frames);
             printf("Total number of retransmissions        : %d\n", llclose_retransmissions);
+            printf("FER                                    : %.2f%%\n", (double) llclose_retransmissions / llclose_frames);
+
             
         } else {
             printf("\n==================== Receiver Statistics ====================\n");
             printf("Total number of frames received        : %d\n", llclose_frames);
             
         }
-        printf("Time Frame                             : %.6f\n", (double) BUF_SIZE / connectionParams.baudRate);
+        double tframe = (double) BUF_SIZE / connectionParams.baudRate;
+        printf("Time Frame                             : %.6f\n", tframe);
+        
         long time = end.tv_sec - begin.tv_sec;
         printf("Total time                             : %ld seconds\n", time);
+        
+        // double tprop = (double) distance / (0.000005/5000);
+        // double tprop = 0.005; // delay? 5 usec microsecond? 5us/km?
+        double tprop=0;
+        printf("Time prop                              : %.6f\n", tprop);
+
+        double alpha = (double) tprop / tframe;
+        printf("alpha                                  : %.6f\n", alpha);
+        
+        printf("Efficiency                             : %.6f\n", (double) (1 / (1 + 2 * alpha)));
         printf("=================================================================\n\n");
     }
     sleep(3);
