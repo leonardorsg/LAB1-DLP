@@ -327,8 +327,6 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
             break;
     }
 
-    printf(" will return from send_information. alarmenabled? %d\n", alarmEnabled);
-
     if (rr != i_value){  // If the received RR is different from the sent I,
         i_value = !i_value;  // change the I value
         changed_i = TRUE;
@@ -737,7 +735,7 @@ int llclose(int showStatistics) {
         
         // calculated baudrate = filesize (bits) / time (s)
         double calculated_baudrate = (double) llclose_frames * 8 * BUF_SIZE / time;
-        printf("Calculated Baudrate                    : %d\n", calculated_baudrate);
+        printf("Calculated Baudrate                    : %d\n", (int) calculated_baudrate);
         printf("Nominal Baudrate                       : %d\n", connectionParams.baudRate);
         printf("Efficency                             : %.6f\n", (double) (calculated_baudrate / connectionParams.baudRate));
         printf("=================================================================\n\n");
