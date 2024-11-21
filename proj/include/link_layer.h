@@ -27,15 +27,8 @@ typedef struct
 #define FALSE 0
 #define TRUE 1
 
-// Baudrate settings are defined in <asm/termbits.h>, which is
-// included by <termios.h>
-#define _POSIX_SOURCE 1 // POSIX compliant source
-
-#define BUF_SIZE 1024
-#define FLAG 0x7E
-#define ESC 0x7D
-#define A 0x03
-#define C 0x03
+// #define N_TRIES 3
+// #define TIMEOUT 4
 
 // Open a connection using the "port" parameters defined in struct linkLayer.
 // Return "1" on success or "-1" on error.

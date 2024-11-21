@@ -12,151 +12,256 @@
 #include <termios.h>
 #include <unistd.h>
 #include <signal.h>
+#include <unistd.h>
+#include <sys/time.h>
+
+// Baudrate settings are defined in <asm/termbits.h>, which is
+// included by <termios.h>
+#define _POSIX_SOURCE 1 // POSIX compliant source
+
+#define FALSE 0
+#define TRUE 1
+
+#define BUF_SIZE 1024
+#define FLAG 0x7E
+#define ESC 0x7D
+
+#define A 0x03
+#define C 0x03
+
+#define SET 0x03
+#define DISC 0x0B
+#define UA 0x07
 
 volatile int STOP = FALSE;
 
-enum State {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK};
-enum State state = START;
+typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_} State;
+typedef enum {SET_UA_STATE, I_RR_STATE, DISC_STATE, UA_STATE, END_STATE} GeneralState;
+
+// RX VARIABLES
+State rx_state = START;
+
+struct timeval begin, end;
+
+
+unsigned char i_signal = 0x12;
+unsigned char rr_signal = 0x12;
+
+unsigned char c = 0x00;
+
+// Used in llread()
+unsigned char bcc2_value;
+unsigned char is_esc;
+unsigned char counter;
+unsigned char aux_buf[BUF_SIZE + 1];
+int count;
+
+// TX VARIABLES
+GeneralState general_state = SET_UA_STATE;
+State tx_state = START;
+
+unsigned char rr = 0x00;
+unsigned char i_value = 0x00; // renamed to i_value to avoid confusion with i for-loop variable
+int changed_i = FALSE;
+int changed_i_rcv = TRUE;
+
+int alarmEnabled = FALSE;
+int alarmCount = 0;
+
+int llclose_retransmissions = 0;
+
+int llclose_frames = 0;
 
 int fdd = -1;
 unsigned char bufc[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
 unsigned char curr_buf[BUF_SIZE + 1] = {0};
 int curr_buf_size = 0;
 
-enum State_ACK {START_ack, FLAG_RCV_ack, A_RCV_ack, C_RCV_ack, BCC1_OK_ack, STOP_ack};
-enum State_ACK state_ack = START_ack;
+int is_valid_packet = FALSE;
 
-unsigned char rr = 0x00;
-unsigned char i_signal = 0x00;
-unsigned char rr_signal = 0x12;
-
-// renamed to i_value to avoid confusion with i for-loop variable
-unsigned char i_value = 0x00; 
-
-int alarmEnabled = FALSE;
-int alarmCount = 0;
-
-enum GeneralState {SET_UA, I_RR, DISC, END};
-enum GeneralState general_state = SET_UA;
+LinkLayer connectionParams;
 
 LinkLayerRole curr_role;
 
-int changed_i = FALSE;
-int changed_i_rcv = FALSE;
 
-int n_tries;
-int timeout;
+void setAlarm(){
+    alarm(connectionParams.timeout);
+    alarmEnabled = TRUE;
+}
 
 void setOffAlarm(){
-    printf("Disabling alarm\n\n");
-    alarm(0); // Disable alarm
+    alarm(0); 
     alarmEnabled = FALSE;
     alarmCount = 0;
 }
 
-void setAlarm(){
-    alarm(timeout);
-    alarmEnabled = TRUE;    
-    printf("Alarm was set to %d! alarmCount: %d\n", timeout, alarmCount);
+void alarmHandler(int signal) {
+    alarmEnabled = FALSE;
+    alarmCount++;
+    //statistics variable
+    llclose_retransmissions++;
+
+    printf("Alarm #%d\n", alarmCount);  
 }
 
-void send_supervision_frame(){
+// Track the number of frames sent
+void increment_llclose_frames(){
+    llclose_frames++;
+}
+
+//Function that implements state machine used to procress receptor supervision bytes
+void processRXSupervisionByte(unsigned char supervisionByte){
+    switch(tx_state){
+        case START:
+            if(supervisionByte == FLAG){
+                tx_state = FLAG_RCV;
+            }
+            break;
+        case FLAG_RCV:
+            if(supervisionByte == 0x01){
+                tx_state = A_RCV;
+            } else if (supervisionByte != FLAG) {
+                tx_state = START;
+            }
+            break;
+
+        case A_RCV:
+            if ((general_state == SET_UA_STATE && supervisionByte == UA) || 
+                (general_state == DISC_STATE && supervisionByte == DISC)){ 
+                tx_state = C_RCV;
+            } else if (supervisionByte == FLAG) {
+                tx_state = FLAG_RCV;
+            } else {
+                tx_state = START;
+            }
+            break;
+        case C_RCV:
+            if((general_state == SET_UA_STATE && supervisionByte == (0x01^ UA)) ||
+                (general_state == DISC_STATE && supervisionByte == (0x01^ DISC))){
+                tx_state = BCC_OK;
+            } else if (supervisionByte == FLAG) {
+                tx_state = FLAG_RCV;
+            } else {
+                tx_state = START;
+            }
+            break;
+        case BCC_OK:
+            // printf("bcc ok received\n");
+            if(supervisionByte == FLAG){
+                tx_state = STOP_;
+
+                if(general_state == SET_UA_STATE){
+                    printf("UA received! \n\n");
+
+                    general_state = I_RR_STATE;
+                }else if(general_state == DISC_STATE){
+                    printf("DISC received! \n\n");
+                    general_state = UA_STATE;
+                }
+
+                setOffAlarm();
+
+            } else {
+                tx_state = START;
+            }
+        default:
+            break;
+    }
+}
+
+void sendSupervisionFrame(){
     
     write(fdd, bufc, 5);
-    printf("Supervision frame was written.\n");
-    
-    if (alarmEnabled == FALSE)
-        setAlarm();
+    printf("Sent supervision frame.\n");
+    increment_llclose_frames();
+    if (!alarmEnabled) setAlarm();
 
-    if(general_state == END) return;
+}
+
+void receiveSupervisionAnswer(){
     
     unsigned char responseBuf[1];
-
-    STOP = FALSE;
-    state = START;
-    unsigned char c = 0x00;
     
     printf("Waiting for RX response...\n");
-    
-    while (STOP == FALSE && alarmEnabled){ 
 
-        if(read(fdd, responseBuf, 1)>0){
-            switch(state){
-                case START:
-                    if(responseBuf[0] == FLAG){
-                        state = FLAG_RCV;
-                        printf(" changed to FLAG_RCV\n");
-                    } 
-                break;
-                case FLAG_RCV:
-                    
-                    if(responseBuf[0] == 0x01){
-                        printf(" changed to A_RCV\n");
-                        state = A_RCV;
-                    } else if (responseBuf[0] != FLAG) {
-                        state = START;
-                    } 
-                    break;
-
-                case A_RCV:
-                    if((responseBuf[0] == 0x07) || (responseBuf[0] == 0x0B)){
-                        printf(" changed to C_RCV\n");
-                        state = C_RCV;
-                        c = responseBuf[0];
-                    } else if (responseBuf[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case C_RCV:
-                    if(responseBuf[0] == (0x01 ^ c)){
-                        printf(" changed to BCC_OK\n");
-                        state = BCC_OK;
-                    } else if (responseBuf[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        STOP = TRUE;
-                    }
-                    break;
-                case BCC_OK:
-                    if(responseBuf[0] == FLAG){
-                        printf(" changed to STOP_\n");
-
-                        if(general_state == SET_UA){
-
-                            general_state = I_RR;
-            
-                            printf("\n Successfully opened SET UA connection with llopen() \n\n");
-            
-                        }else if(general_state == DISC){
-                            printf("DISC received! \n");
-                        
-                            general_state = END;
-                        }
-                        setOffAlarm();            
-
-                        STOP = TRUE;
-                    } 
-                    break;
-                }
-            } else {
-            STOP = TRUE;
-            printf("no response received\n");
-        }
+    tx_state = START;
+    while (alarmEnabled && tx_state != STOP_){
+        if (read(fdd, responseBuf, 1)){
+            processRXSupervisionByte(responseBuf[0]);
+        } 
     }
-        
-    printf(" will return from send_supervision_frame. alarmenabled? %d\n", alarmEnabled);
+    
+}
+
+//Function that implements state machine used to procress receptor information bytes
+void processRXInformationByte(unsigned char informationByte){
+    switch(tx_state){
+        case START:
+            if(informationByte == FLAG){
+                tx_state = FLAG_RCV;
+            }
+        break;
+        case FLAG_RCV:
+            if(informationByte == 0x01){
+                tx_state = A_RCV;
+            } else if (informationByte != FLAG) {
+                tx_state = START;
+            }
+            break;
+
+        case A_RCV:
+            if((informationByte == 0xAA) || (informationByte == 0xAB) || (informationByte == 0x54) || (informationByte == 0x55)){
+                tx_state = C_RCV;
+                c = informationByte;
+            } else if (informationByte == FLAG) {
+                tx_state = FLAG_RCV;
+            } else {
+                tx_state = START;
+            }
+            break;
+        case C_RCV:
+            if(informationByte == (0x01 ^ c)){
+                tx_state = BCC_OK;
+            } else if (informationByte == FLAG) {
+                tx_state = FLAG_RCV;
+            } else {
+                tx_state = START;
+            }
+            break;
+        case BCC_OK:
+            // printf("bcc ok received\n");
+            if(informationByte == FLAG){
+                tx_state = STOP_;
+            } else {
+                tx_state = START;
+            }
+            break;
+        default:
+            break;
+    }
+}
+    
+void receiveInformationAnswer(){
+
+    unsigned char responseBuf[1];
+
+    tx_state = START;
+    while (alarmEnabled && tx_state != STOP_){
+        if (read(fdd, responseBuf, 1)){
+            processRXInformationByte(responseBuf[0]);
+        } 
+    }
+
 }
 
 int send_information(const unsigned char *selectedFrame, int frameSize){
 
+    c = 0x00;
     // Create string to send
     bufc[0] = FLAG; 
     bufc[1] = A; 
 
     // C
-
     if (i_value)
         bufc[2] = 0x80;
     else
@@ -186,87 +291,32 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
 
     bufc[pos] = bcc2;
     bufc[pos+1] = FLAG;
- 
-    write(fdd, bufc, pos+2);
-    
+
+    int bytesWritten = write(fdd, bufc, pos+2);
+    increment_llclose_frames();
     if (alarmEnabled == FALSE) {
-        printf("Setting alarm in send_info\n");
         setAlarm();
     }
-    
-    unsigned char responseBuf[1];
-    state = START;
-    STOP = FALSE;
-    unsigned char c = 0x00;
-    while (STOP == FALSE && alarmEnabled){
-        read(fdd, responseBuf, 1);
 
-            switch(state){
-                case START:
-                    if(responseBuf[0] == FLAG){
-                        state = FLAG_RCV;
-                    } 
-                break;
-                case FLAG_RCV:
-                    if(responseBuf[0] == 0x01){
-                        state = A_RCV;
-                    } else if (responseBuf[0] != FLAG) {
-                        state = START;
-                    }
-                    break;
-
-                case A_RCV:
-                    if((responseBuf[0] == 0xAA) || (responseBuf[0] == 0xAB) || (responseBuf[0] == 0x54) || (responseBuf[0] == 0x55)){
-                        state = C_RCV;
-                        c = responseBuf[0];
-                    } else if (responseBuf[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case C_RCV:
-                    if(responseBuf[0] == (0x01 ^ c)){
-                        state = BCC_OK;
-                    } else if (responseBuf[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case BCC_OK:
-                    if(responseBuf[0] == FLAG){
-                        STOP = TRUE;
-
-                    } else {
-                        state = START;
-                    }
-                    break;
-            }
-            /*
-        } else {
-            printf("No response received, state %d\n", state);
-            STOP = TRUE;
-        }
-        */
-    }
-
+    receiveInformationAnswer();
 
     switch (c) {
         case 0x54:
             rr = 0;
             setOffAlarm();
-            printf("REJ0\n");
+            llclose_retransmissions++;
+            printf("REJ0. ");
             break;
         case 0xAA:
             rr = 0;
             setOffAlarm();
-            //printf("RR0\n");       
+            // printf("RR0\n");       
             break;
         case 0x55:
             rr = 1;
             setOffAlarm();
-            printf("REJ1\n"); 
+            llclose_retransmissions++;
+            printf("REJ1. "); 
             break;
         case 0xAB:
             rr = 1;
@@ -282,55 +332,112 @@ int send_information(const unsigned char *selectedFrame, int frameSize){
     if (rr != i_value){  // If the received RR is different from the sent I,
         i_value = !i_value;  // change the I value
         changed_i = TRUE;
-        return 0;
     } 
-    return -1;
+
+    return bytesWritten;
 }
 
-// Alarm function handler
-void alarmHandler(int signal)
-{
-    alarmEnabled = FALSE;
-    alarm(0);
-    alarmCount++;
-
-    printf("Alarm #%d\n", alarmCount);
-
-    switch (general_state){
-        case SET_UA:
-            send_supervision_frame();
-            break;
-        case I_RR:    
-            if (send_information(curr_buf, curr_buf_size)<0){
-                printf("ALARMHANDLER We received a response about a i_value different from the one we sent\n");
-            } else {
-                printf("ALARMHANDLER We received a response about a i_value equal to the one we sent\n");
+//Function that implements state machine used to procress transmitor supervision bytes
+void processTXSupervisionByte(unsigned char TXSupervisionByte){
+    switch(rx_state){
+        case START:
+            if(TXSupervisionByte == FLAG){
+                rx_state = FLAG_RCV;
             }
-            // send_information(curr_buf, curr_buf_size);
             break;
-        case DISC:
-            send_supervision_frame();
+        case FLAG_RCV:
+            if(TXSupervisionByte == A){
+                rx_state = A_RCV;
+            } else if (TXSupervisionByte != FLAG) {
+                rx_state = START;
+            }
+            break;
+        case A_RCV:
+            // Probably the receiver DISC ACK was lost, and the transmitter is sending a new DISC
+            if (general_state == UA_STATE && TXSupervisionByte == DISC){
+                printf("Receiving a late DISC signal. \n");
+                general_state = DISC_STATE;
+                rx_state = C_RCV;
+            }
+            else if((general_state == SET_UA_STATE && TXSupervisionByte == SET) || 
+                (general_state == DISC_STATE && TXSupervisionByte == DISC) || 
+                (general_state == UA_STATE && TXSupervisionByte == UA)){ 
+                rx_state = C_RCV;
+            } else if (TXSupervisionByte == FLAG) {
+                rx_state = FLAG_RCV;
+            } else {
+                rx_state = START;
+            }
+            break;
+        case C_RCV:
+            if((general_state == SET_UA_STATE && TXSupervisionByte== (A ^ SET)) || 
+                (general_state == DISC_STATE && TXSupervisionByte == (A ^ DISC)) || 
+                (general_state == UA_STATE && TXSupervisionByte == (A ^ UA))){ 
+                rx_state = BCC_OK;
+            } else if (TXSupervisionByte == FLAG) {
+                rx_state = FLAG_RCV;
+            } else {
+                rx_state = START;
+            }
+            break;
+        case BCC_OK:
+            if(TXSupervisionByte == FLAG){
+                rx_state = STOP_;
+
+                if(general_state == SET_UA_STATE){
+                    printf("SET received!\n");
+                    general_state = I_RR_STATE;
+                        
+                    bufc[0] = FLAG; 
+                    bufc[1] = 0x01; // A
+                    bufc[2] = UA; // C
+                    bufc[3] = 0x01 ^ UA; // bcc1
+                    bufc[4] = FLAG; 
+                    
+                    write(fdd, bufc, 5);
+                    increment_llclose_frames();;
+
+                } else if (general_state == DISC_STATE){
+                    printf("DISC received!\n");
+                    // Setting state to UA_STATE, waiting for UA
+                    general_state = UA_STATE;
+
+                    bufc[0] = FLAG; 
+                    bufc[1] = 0x01; // A
+                    bufc[2] = DISC; // C
+                    bufc[3] = 0x01 ^ DISC; // bcc1
+                    bufc[4] = FLAG; 
+
+                    write(fdd, bufc, 5);
+                    increment_llclose_frames();;
+                } else if (general_state == UA_STATE){
+                    printf("UA received!\n");
+                    general_state = END_STATE;
+                    increment_llclose_frames();;
+                }
+            } else {
+                rx_state = START;
+            }
             break;
         default:
-            printf("Invalid general state, %d\n", general_state);
             break;
-    } 
-    
+    }
 }
 
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters)
-{
+int llopen(LinkLayer connectionParameters){
     fdd = openSerialPort(connectionParameters.serialPort,
                        connectionParameters.baudRate);
 
     if (fdd < 0) return -1;
 
-    n_tries = connectionParameters.nRetransmissions;
-    timeout = connectionParameters.timeout;
-    
+    gettimeofday(&begin, NULL);
+
+
+    connectionParams = connectionParameters;
+
     printf("New termios structure set\n");
 
     if(connectionParameters.role == LlTx){
@@ -342,91 +449,32 @@ int llopen(LinkLayer connectionParameters)
         bufc[1] = A;
         bufc[2] = 0x03; // C
         bufc[3] = A ^ 0x03; // bcc1
-        bufc[4] = FLAG;
-        
-        send_supervision_frame();
+        bufc[4] = FLAG; 
 
-        while (alarmCount < n_tries && general_state==SET_UA)
-        {
+        while (alarmCount <= connectionParams.nRetransmissions && general_state==SET_UA_STATE) {
             if (!alarmEnabled) {
-                //printf("alarmCount: %d, alarm disabled, will send supervision frame. \n", alarmCount);
-                setAlarm();
-                //printf("alarmCount: %d, sent supervision frame in llopen. \n", alarmCount);
-            } 
+                sendSupervisionFrame();
+                receiveSupervisionAnswer();
+            }
         }
 
-        if(general_state == SET_UA) return -1;
+        //If the transmitor tried to retransmits supervision frame N times and is still in SET_UA_STATE, returns -1
+        if(general_state == SET_UA_STATE) return -1;
         else return fdd;
     }
 
     if(connectionParameters.role == LlRx){
         curr_role = LlRx;
 
-        while (STOP == FALSE && general_state == SET_UA)
-        {
-            read(fdd, bufc, 1);
-
-            switch(state){
-                case START:
-                    if(bufc[0] == FLAG){
-                        state = FLAG_RCV;
-                    }
-                break;
-                case FLAG_RCV:
-                    if(bufc[0] == A){
-                        state = A_RCV;
-                    } else if (bufc[0] != FLAG) {
-                        state = START;
-                    }
-                    break;
-
-                case A_RCV:
-                    if(bufc[0] == C){
-                        state = C_RCV;
-                    } else if (bufc[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case C_RCV:
-                    if(bufc[0] == (A ^ C)){
-                        state = BCC_OK;
-                    } else if (bufc[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case BCC_OK:
-                    if(bufc[0] == FLAG){
-                        printf("SET acknowledged!\n");
-            
-
-                        bufc[0] = FLAG; 
-                        bufc[1] = 0x01; // A
-                        bufc[2] = 0x07; // C
-                        bufc[3] = 0x01 ^ 0x07; // bcc1
-                        bufc[4] = FLAG; 
-
-                        write(fdd, bufc, 5);
-                        
-
-                        STOP = TRUE;
-                        general_state = I_RR;
-                    } else {
-                        state = START;
-                    }
-                    break;
+        while (general_state != I_RR_STATE){
+            if (read(fdd, bufc, 1)){
+                processTXSupervisionByte(bufc[0]);
             }
         }
     }
     
     return fdd;
 }
-
-
-
 
 ////////////////////////////////////////////////
 // LLWRITE
@@ -436,22 +484,18 @@ int llwrite(const unsigned char *buf, int bufSize)
     // Set alarm function handler
     (void)signal(SIGALRM, alarmHandler);
     
-    // Copy value of buf and bufsize as a global variable, so that alarm handler can use it
+    // Copy value of buf and bufsize as a global variable so that alarm handler can use it
     curr_buf_size = bufSize;
     for(int i=0; i < bufSize; i++){
         curr_buf[i] = buf[i];
     }
     
     changed_i = FALSE;
-
-    while (alarmCount < n_tries && general_state == I_RR && changed_i==FALSE){
-        if (!alarmEnabled){
-            printf("Calling send_info in llwrite\n");
-            if (send_information(buf, bufSize)<0){
-                printf("LLWRITE We received a response about a i_value different from the one we sent\n");
-            } else {
-                printf("LLWRITE We received a response about a i_value equal to the one we sent\n");
-            }
+    int bytesWritten = 0;
+    
+    while (alarmCount <= connectionParams.nRetransmissions && general_state == I_RR_STATE && changed_i==FALSE){
+        if (!alarmEnabled){        
+           bytesWritten = send_information(buf, bufSize);
         }
     }
 
@@ -460,139 +504,158 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     curr_buf_size = 0;
 
-    if (alarmCount>=n_tries){
+    if (alarmCount>connectionParams.nRetransmissions){
         printf("Exausted all attempts\n");
         return -1; 
     } 
     
-    return 0;
+    return bytesWritten;
 }
+
+void processTXInformationByte(unsigned char TXInformationByte){
+    switch(rx_state){
+        case START:
+            if(TXInformationByte == FLAG){
+                rx_state = FLAG_RCV;
+            }
+            break;
+        case FLAG_RCV:
+            if(TXInformationByte == A){
+                rx_state  = A_RCV;
+            } else if (TXInformationByte != FLAG) {
+                rx_state  = START;
+            }
+            break;
+
+        case A_RCV:
+            if((TXInformationByte == 0x00) || (TXInformationByte == 0x80)){
+                rx_state = C_RCV;
+
+                if (i_signal == TXInformationByte) changed_i_rcv = FALSE;
+                else changed_i_rcv = TRUE;
+
+                i_signal = TXInformationByte;
+            } else if (TXInformationByte == FLAG) {
+                rx_state = FLAG_RCV;
+            } else {
+                rx_state = START;
+            }
+            break;
+        case C_RCV:
+            if(TXInformationByte == (A ^ i_signal)){
+                rx_state  = BCC_OK;
+            } else if (TXInformationByte == FLAG) {
+                rx_state  = FLAG_RCV;
+            } else {
+                rx_state = START;
+            }
+            break;
+        case BCC_OK:
+            if(TXInformationByte == FLAG){
+                bcc2_value ^= counter;
+                if(bcc2_value == counter){
+                    rx_state = STOP_;
+
+                    if (changed_i_rcv){
+                        is_valid_packet = TRUE;
+                    } else if ((rr_signal == 0x54) || (rr_signal == 0x55)){
+                        // if the previous rr_signal was REJ and the i kept the same, then we want to write it
+                        is_valid_packet = TRUE;
+                    } else { 
+                        // if the i did not change, and we accepted the previous one
+                        is_valid_packet = FALSE;
+                    }
+
+                    if (i_signal == 0x00) rr_signal = 0xAB;
+                    else if (i_signal == 0x80) rr_signal = 0xAA;
+
+                    // printf("RIGHT BCC2 0X%02X, i_signal 0x%02X, so rr= 0x%02X\n", bcc2_value, i_signal, rr_signal);
+                    
+                } else{
+                    rx_state = STOP_;
+                    if (i_signal == 0x00) rr_signal = 0x54;
+                    else if (i_signal == 0x80) rr_signal = 0x55;
+
+                    is_valid_packet = FALSE;
+
+                    printf("WRONG BCC2 %0x02X, i_signal 0x%02X, so rr= 0x%02X\n", bcc2_value, i_signal, rr_signal);
+                }
+            } else {
+                if(!is_esc){
+                    if(TXInformationByte==ESC){
+                        is_esc = TRUE;
+                    }else{
+                        counter = TXInformationByte;
+                        bcc2_value ^= TXInformationByte;
+                        aux_buf[count] = TXInformationByte;
+                        count++;
+                    }
+                }
+                else {
+                    is_esc = FALSE;
+                    if (TXInformationByte == 0x5e){
+                        bcc2_value ^= FLAG;
+                        aux_buf[count] = FLAG;
+                        count++;
+
+                    } else if(TXInformationByte == 0x5d){
+                        bcc2_value ^= ESC;
+                        aux_buf[count] = ESC;
+                        count++;
+
+                    }
+                }
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet) {
-    STOP = FALSE;
-    unsigned char bcc2_value = 0x00;
-    unsigned char is_esc = FALSE;
-    unsigned char counter = ESC;
-    state_ack = START_ack;
-    unsigned char aux_buf[BUF_SIZE + 1] = {0};
-    int count = 0;
+int llread(unsigned char *packet){
+    bcc2_value = 0x00;
+    is_esc = FALSE;
+    counter = ESC;
 
-    while ((STOP == FALSE) && (general_state == I_RR)) {
-        
-        read(fdd, bufc, 1);
+    memset(aux_buf, 0, sizeof(aux_buf));
+    count = 0;
 
-        switch(state_ack){
-            case START_ack:
-                if(bufc[0] == FLAG){
-                    state_ack = FLAG_RCV_ack;
-                }
-                break;
-            case FLAG_RCV_ack:
-                if(bufc[0] == A){
-                    state_ack  = A_RCV_ack;
-                } else if (bufc[0] != FLAG) {
-                    state_ack  = START_ack;
-                }
-                break;
-
-            case A_RCV_ack:
-                if((bufc[0] == 0x00) || (bufc[0] == 0x80)){
-                    state_ack = C_RCV_ack;
-                    if(i_signal == bufc[0]){
-                        changed_i_rcv = FALSE;
-                    } else changed_i_rcv = TRUE;
-                    i_signal = bufc[0];
-                    
-                } else if (bufc[0] == FLAG) {
-                    state_ack = FLAG_RCV_ack;
-                } else {
-                    state_ack = START_ack;
-                }
-                break;
-            case C_RCV:
-                if(bufc[0] == (A ^ i_signal)){
-                    state_ack  = BCC1_OK_ack;
-                } else if (bufc[0] == FLAG) {
-                    state_ack  = FLAG_RCV_ack;
-                } else {
-                    state_ack = START_ack;
-                }
-                break;
-            case BCC1_OK_ack:
-                if(bufc[0] == FLAG){
-                    bcc2_value ^= counter;
-                    if(bcc2_value == counter){
-                        state_ack = STOP_ack;
-
-                        if (i_signal == 0x00) rr_signal = 0xAB;
-                        else if (i_signal == 0x80) rr_signal = 0xAA;
-
-                    } else{
-                        state_ack = STOP_ack;
-                        if (i_signal == 0x00) rr_signal = 0x54;
-                        else if (i_signal == 0x80) rr_signal = 0x55;
-
-                        printf("WRONG BCC2, i_signal 0x%02X, so rr= 0x%02X\n", i_signal, rr_signal);
-                    }
-                } else {
-                    if(!is_esc){
-                        if(bufc[0]==ESC){
-                            is_esc = TRUE;
-                        }else{
-                            counter = bufc[0];
-                            bcc2_value ^= bufc[0];
-                            aux_buf[count] = bufc[0];
-                            count++;
-                        }
-                    }
-                    else {
-                        is_esc = FALSE;
-                        if (bufc[0] == 0x5e){
-                            bcc2_value ^= FLAG;
-                            aux_buf[count] = FLAG;
-                            count++;
-
-                        } else if(bufc[0] == 0x5d){
-                            bcc2_value ^= ESC;
-                            aux_buf[count] = ESC;
-                            count++;
-
-                        }
-                    }
-                }
-                break;
-            case STOP_ack:
-
-                bufc[0] = FLAG; 
-                bufc[1] = 0x01; // A
-                bufc[2] = rr_signal; // C
-                bufc[3] = 0x01 ^ rr_signal; // bcc1
-                bufc[4] = FLAG; 
- 
-                write(fdd, bufc, 5);
-                STOP = TRUE;
-                break;
-        }
+    rx_state = START;
+    while (rx_state != STOP_){ 
+        if (read(fdd, bufc, 1)){
+            processTXInformationByte(bufc[0]);
+        } 
     }
 
-    if(changed_i_rcv ){
+    if (rx_state == STOP_){
+
+        bufc[0] = FLAG; 
+        bufc[1] = 0x01; // A
+        bufc[2] = rr_signal; // C
+        bufc[3] = 0x01 ^ rr_signal; // bcc1
+        bufc[4] = FLAG; 
+
+        write(fdd, bufc, 5);
+        increment_llclose_frames();;
+    }
+    if(is_valid_packet){
         for(int i = 0; i < count-1;i++){
             packet[i] = aux_buf[i];
         }
-
         return count-1;
-    } else return -1;
-
+    } else {
+        return -1;
+    }
 }
 
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics)
-{
+int llclose(int showStatistics) {
     //TODO collect statistics
     if(curr_role == LlTx){
         // Set alarm function handler
@@ -601,149 +664,85 @@ int llclose(int showStatistics)
         // Create string to send
         bufc[0] = FLAG; 
         bufc[1] = A;
-        bufc[2] = 0x0B; // C
-        bufc[3] = A ^ 0x0B; // bcc1
+        bufc[2] = DISC; // C
+        bufc[3] = A ^ DISC; // bcc1
         bufc[4] = FLAG; 
 
-        general_state = DISC;
-        send_supervision_frame();
+        printf("Sending DISC...\n");
+        general_state = DISC_STATE;
+
+        while (alarmCount <= connectionParams.nRetransmissions && general_state==DISC_STATE){
+            if (!alarmEnabled){
+                sendSupervisionFrame();
+                receiveSupervisionAnswer();
+            }
+        }
+
+        if (alarmCount>connectionParams.nRetransmissions){
+            printf("Exausted all attempts\n");
+            return -1; 
+        } 
+
+        bufc[0] = FLAG; 
+        bufc[1] = A;
+        bufc[2] = UA; // C
+        bufc[3] = A ^ UA; // bcc1
+        bufc[4] = FLAG; 
+
+        printf("Sending UA...\n");
+        sendSupervisionFrame();
+        general_state = END_STATE;
         
-        while (alarmCount < n_tries && general_state==DISC)
-        {
-            if (!alarmEnabled)
-            {
-                setAlarm();
-            }
+    } else {
+        general_state = DISC_STATE;
+        rx_state = START;
+        
+        printf("Waiting for DISC...\n");
+        
+        while (general_state!=UA_STATE){
+            if (read(fdd, bufc, 1)){
+                processTXSupervisionByte(bufc[0]);
+            }     
         }
 
-        if(general_state == END){
-
-            bufc[0] = FLAG; 
-            bufc[1] = A;
-            bufc[2] = 0x07; // C
-            bufc[3] = A ^ 0x07; // bcc1
-            bufc[4] = FLAG; 
-
-            send_supervision_frame();
-
-            while (alarmCount < n_tries && general_state==DISC)
-        {
-            if (!alarmEnabled)
-            {
-                setAlarm();
-            }
-        }
-        }
-    } else if(curr_role == LlRx){
-        general_state = DISC;
-        state = START;
-        STOP = FALSE;
-        while (STOP == FALSE && general_state == DISC){
-            read(fdd, bufc, 1);
-            
-            switch(state){
-                case START:
-                    if(bufc[0] == FLAG){
-                        state = FLAG_RCV;
-                    }
-                break;
-                case FLAG_RCV:
-                    if(bufc[0] == A){
-                        state = A_RCV;
-                    } else if (bufc[0] != FLAG) {
-                        state = START;
-                    }
-                    break;
-
-                case A_RCV:
-                    if(bufc[0] == 0X0B){
-                        state = C_RCV;
-                    } else if (bufc[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case C_RCV:
-                    if(bufc[0] == (A ^ 0x0B)){
-                        state = BCC_OK;
-                    } else if (bufc[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case BCC_OK:
-                    if(bufc[0] == FLAG){
-                        printf("DISC acknowledged!\n");
-                    
-                        bufc[0] = FLAG; 
-                        bufc[1] = 0x01; // A
-                        bufc[2] = 0x0B; // C
-                        bufc[3] = 0x01 ^ 0x0B; // bcc1
-                        bufc[4] = FLAG; 
-                        write(fdd, bufc, 5);
-
-                        STOP = TRUE;
-                        general_state = END;
-                    } else {
-                        state = START;
-                    }
-                    break;
-            }
-        }
-
-        STOP = FALSE;
-        state = START;
-
-        while (STOP == FALSE && general_state == END){
-            
-            read(fdd, bufc, 1);
-
-            switch(state){
-                case START:
-                    if(bufc[0] == FLAG){
-                        state = FLAG_RCV;
-                    }
-                break;
-                case FLAG_RCV:
-                    if(bufc[0] == A){
-                        state = A_RCV;
-                    } else if (bufc[0] != FLAG) {
-                        state = START;
-                    }
-                    break;
-
-                case A_RCV:
-                    if(bufc[0] == 0x07){
-                        state = C_RCV;
-                    } else if (bufc[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case C_RCV:
-                    if(bufc[0] == (A ^ 0x07)){
-                        state = BCC_OK;
-                    } else if (bufc[0] == FLAG) {
-                        state = FLAG_RCV;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                case BCC_OK:
-                    if(bufc[0] == FLAG){
-                        printf("Final UA acknowledged!\n");
-                        STOP = TRUE;
-                    } else {
-                        state = START;
-                    }
-                    break;
-                
+        printf("Waiting for UA...\n");
+        rx_state = START;
+        while (general_state!=END_STATE){
+            if (read(fdd, bufc, 1)){
+                processTXSupervisionByte(bufc[0]);
             }
         }
     }
+
+
+    if(showStatistics){
+        gettimeofday(&end, NULL);
+        if(curr_role == LlTx){
+            printf("\n==================== Transmitter Statistics ====================\n");
+            printf("Total number of frames sent            : %d\n", llclose_frames);
+            printf("Total number of retransmissions        : %d\n", llclose_retransmissions);
+            printf("FER                                    : %.2f%%\n", (double) llclose_retransmissions / llclose_frames);
+
+            
+        } else {
+            printf("\n==================== Receiver Statistics ====================\n");
+            printf("Total number of frames received        : %d\n", llclose_frames);
+            
+        }
+        double tframe = (double) BUF_SIZE*8 / connectionParams.baudRate;
+        printf("Time Frame                             : %.6f\n", tframe);
+        
+        long time = end.tv_sec - begin.tv_sec;
+        printf("Total time                             : %ld seconds\n", time);
+        
+        // calculated baudrate = filesize (bits) / time (s)
+        double calculated_baudrate = (double) llclose_frames * 8 * BUF_SIZE / time;
+        printf("Calculated Baudrate                    : %d\n", calculated_baudrate);
+        printf("Nominal Baudrate                       : %d\n", connectionParams.baudRate);
+        printf("Efficency                             : %.6f\n", (double) (calculated_baudrate / connectionParams.baudRate));
+        printf("=================================================================\n\n");
+    }
+    sleep(3);
     int clstat = closeSerialPort();
 
     return clstat;

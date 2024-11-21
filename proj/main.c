@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "application_layer.h"
 
@@ -64,7 +65,6 @@ int main(int argc, char *argv[])
            N_TRIES,
            TIMEOUT,
            filename);
-
     applicationLayer(serialPort, role, baudrate, N_TRIES, TIMEOUT, filename);
 
     return 0;
